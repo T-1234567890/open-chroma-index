@@ -117,6 +117,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Package CLI dry-run
+        run: cargo package --manifest-path cli/Cargo.toml
+
+      - name: Require crates.io token
+        if: env.CARGO_REGISTRY_TOKEN == ''
+        run: |
+          echo "CARGO_REGISTRY_TOKEN secret is required to publish the CLI crate." >&2
+          exit 1
+
+      - name: Publish CLI crate to crates.io
+        run: cargo publish --manifest-path cli/Cargo.toml --token "$CARGO_REGISTRY_TOKEN"
+
       - name: Download CLI artifacts
         uses: actions/download-artifact@v4
         with:
@@ -126,18 +144,20 @@ jobs:
 
       - name: Build CLI release body
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG_NAME="${GITHUB_REF_NAME}"
-          PREVIOUS_TAG="$(git tag --list 'cli-v*' --sort=-v:refname | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
-          if [ -z "$PREVIOUS_TAG" ]; then
-            CHANGELOG_RANGE="$TAG_NAME"
-          else
-            CHANGELOG_RANGE="${PREVIOUS_TAG}...${TAG_NAME}"
-          fi
           WORKFLOW_RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           RELEASE_DATE="$(date -u +%Y-%m-%d)"
-          cat > release-cli-body.md <<EOF
+          GENERATED_NOTES="$(mktemp)"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${TAG_NAME}" \
+            --jq '.body' > "${GENERATED_NOTES}"
+
+          {
+          cat <<EOF
           # Open Chroma Index CLI ${TAG_NAME}
 
           This release contains the \`oci\` command-line client.
@@ -149,9 +169,11 @@ jobs:
           - Tag: ${TAG_NAME}
           - Type: CLI
 
-          ## Full Changelog
+          ## Changes
 
-          ${CHANGELOG_RANGE}
+          EOF
+          cat "${GENERATED_NOTES}"
+          cat <<EOF
 
           ## Post-release verification
 
@@ -178,9 +200,8 @@ jobs:
           Release: ${TAG_NAME}
 
           Date: ${RELEASE_DATE}
-
-          Crates.io automatic publishing is intentionally not enabled in this workflow. If publishing is enabled later, use the CARGO_REGISTRY_TOKEN secret.
           EOF
+          } > release-cli-body.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -36,19 +36,30 @@ jobs:
       - name: Package core dry-run
         run: cargo package
 
+      - name: Require crates.io token
+        if: env.CARGO_REGISTRY_TOKEN == ''
+        run: |
+          echo "CARGO_REGISTRY_TOKEN secret is required to publish the core crate." >&2
+          exit 1
+
+      - name: Publish core crate to crates.io
+        run: cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
       - name: Build core release body
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG_NAME="${GITHUB_REF_NAME}"
-          PREVIOUS_TAG="$(git tag --list 'core-v*' --sort=-v:refname | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
-          if [ -z "$PREVIOUS_TAG" ]; then
-            CHANGELOG_RANGE="$TAG_NAME"
-          else
-            CHANGELOG_RANGE="${PREVIOUS_TAG}...${TAG_NAME}"
-          fi
           WORKFLOW_RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          cat > release-core-body.md <<EOF
+          GENERATED_NOTES="$(mktemp)"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${TAG_NAME}" \
+            --jq '.body' > "${GENERATED_NOTES}"
+
+          {
+          cat <<EOF
           # Open Chroma Index Core / Kernel ${TAG_NAME}
 
           This release contains the Open Chroma Index kernel/library crate and registry/spec assets.
@@ -59,9 +70,11 @@ jobs:
           - Tag: ${TAG_NAME}
           - Type: Core / Kernel
 
-          ## Full Changelog
+          ## Changes
 
-          ${CHANGELOG_RANGE}
+          EOF
+          cat "${GENERATED_NOTES}"
+          cat <<EOF
 
           ## Post-release verification
 
@@ -76,7 +89,7 @@ jobs:
           | Rust tests | success |
           | Registry validation | success |
           | Package dry-run | success |
-          | Crates.io publish | skipped |
+          | Crates.io publish | success |
           | GitHub Release assets | success |
 
           ## Registry assets
@@ -91,9 +104,8 @@ jobs:
           ## Notes
 
           This is a kernel/library release. It does not include CLI binaries.
-
-          Crates.io automatic publishing is intentionally not enabled in this workflow. If publishing is enabled later, use the CARGO_REGISTRY_TOKEN secret.
           EOF
+          } > release-core-body.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

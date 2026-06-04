@@ -439,7 +439,7 @@ fn validate_checksum(path: &'static str, content: &str) -> Result<(), RegistryEr
             reason: format!("missing checksum for {path}"),
         });
     };
-    let actual = sha256_hex(content.as_bytes());
+    let actual = sha256_normalized_text_hex(content);
     if expected == actual {
         Ok(())
     } else {
@@ -474,6 +474,15 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         out.push_str(&format!("{byte:02x}"));
     }
     out
+}
+
+#[must_use]
+pub fn sha256_normalized_text_hex(content: &str) -> String {
+    if content.as_bytes().contains(&b'\r') {
+        sha256_hex(content.replace("\r\n", "\n").replace('\r', "\n").as_bytes())
+    } else {
+        sha256_hex(content.as_bytes())
+    }
 }
 
 fn sha256(bytes: &[u8]) -> [u8; 32] {
@@ -682,6 +691,16 @@ mod tests {
                 .steps()
                 .iter()
                 .any(|step| step.short_id == "OCI-1-46PK-236")
+        );
+    }
+
+    #[test]
+    fn checksum_validation_is_stable_across_crlf_checkouts() {
+        let lf = Registry::frozen_families_json();
+        let crlf = lf.replace('\n', "\r\n");
+        assert_eq!(
+            sha256_normalized_text_hex(lf),
+            sha256_normalized_text_hex(&crlf)
         );
     }
 }

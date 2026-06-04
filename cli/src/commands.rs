@@ -1130,7 +1130,7 @@ fn checksum_entries() -> Vec<(String, String, bool)> {
     files
         .iter()
         .map(|(path, content)| {
-            let actual = oci_core::registry::sha256_hex(content.as_bytes());
+            let actual = oci_core::registry::sha256_normalized_text_hex(content);
             let expected = checksum_expected(path).unwrap_or_else(|| actual.clone());
             ((*path).to_string(), actual.clone(), actual == expected)
         })
