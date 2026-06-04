@@ -11,6 +11,7 @@ pub struct CliConfig {
     pub inspect: InspectConfig,
     pub registry: RegistryConfig,
     pub color: ColorConfig,
+    pub server: ServerConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +21,7 @@ pub struct OutputConfig {
     pub show_support: bool,
     pub show_warnings: bool,
     pub show_exports: bool,
+    pub verify: bool,
     pub default_exports: Vec<String>,
 }
 
@@ -48,6 +50,13 @@ pub struct RegistryConfig {
 pub struct ColorConfig {
     pub default_input_space: String,
     pub default_targets: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+    pub warn_non_localhost: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,12 +89,8 @@ impl Default for CliConfig {
                 show_support: true,
                 show_warnings: true,
                 show_exports: true,
-                default_exports: vec![
-                    "hex".to_string(),
-                    "oklch".to_string(),
-                    "display-p3".to_string(),
-                    "css".to_string(),
-                ],
+                verify: false,
+                default_exports: all_export_targets(),
             },
             encode: EncodeConfig {
                 include_offset: true,
@@ -94,12 +99,7 @@ impl Default for CliConfig {
             },
             inspect: InspectConfig {
                 exports: "summary".to_string(),
-                default_export_list: vec![
-                    "hex".to_string(),
-                    "oklch".to_string(),
-                    "srgb".to_string(),
-                    "display-p3".to_string(),
-                ],
+                default_export_list: all_export_targets(),
             },
             registry: RegistryConfig {
                 version: "v1".to_string(),
@@ -115,8 +115,35 @@ impl Default for CliConfig {
                     "display-p3".to_string(),
                 ],
             },
+            server: ServerConfig {
+                host: "127.0.0.1".to_string(),
+                port: 8765,
+                warn_non_localhost: true,
+            },
         }
     }
+}
+
+pub fn all_export_targets() -> Vec<String> {
+    [
+        "hex",
+        "rgb",
+        "hsl",
+        "srgb",
+        "display-p3",
+        "adobe-rgb",
+        "rec709",
+        "oklch",
+        "oklab",
+        "css",
+        "json-token",
+        "swift",
+        "tailwind",
+        "cmyk",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }
 
 impl CliConfig {
@@ -156,7 +183,7 @@ impl CliConfig {
                 }
                 section = line[1..line.len() - 1].trim().to_string();
                 match section.as_str() {
-                    "output" | "encode" | "inspect" | "registry" | "color" => {}
+                    "output" | "encode" | "inspect" | "registry" | "color" | "server" => {}
                     _ => {
                         return Err(ConfigError::new(format!(
                             "line {line_number}: unknown section [{section}]"
@@ -186,6 +213,7 @@ impl CliConfig {
                 "show_support = {}\n",
                 "show_warnings = {}\n",
                 "show_exports = {}\n",
+                "verify = {}\n",
                 "default_exports = {}\n\n",
                 "[encode]\n",
                 "include_offset = {}\n",
@@ -201,13 +229,18 @@ impl CliConfig {
                 "validate_on_start = {}\n\n",
                 "[color]\n",
                 "default_input_space = \"{}\"\n",
-                "default_targets = {}\n"
+                "default_targets = {}\n\n",
+                "[server]\n",
+                "host = \"{}\"\n",
+                "port = {}\n",
+                "warn_non_localhost = {}\n"
             ),
             escape_toml_string(&self.output.format),
             self.output.precision,
             self.output.show_support,
             self.output.show_warnings,
             self.output.show_exports,
+            self.output.verify,
             toml_array(&self.output.default_exports),
             self.encode.include_offset,
             self.encode.prefer_short_code,
@@ -219,7 +252,10 @@ impl CliConfig {
             escape_toml_string(&self.registry.path),
             self.registry.validate_on_start,
             escape_toml_string(&self.color.default_input_space),
-            toml_array(&self.color.default_targets)
+            toml_array(&self.color.default_targets),
+            escape_toml_string(&self.server.host),
+            self.server.port,
+            self.server.warn_non_localhost
         )
     }
 
@@ -255,6 +291,7 @@ impl CliConfig {
             ("output", "show_exports") => {
                 self.output.show_exports = parse_bool(value, line_number)?
             }
+            ("output", "verify") => self.output.verify = parse_bool(value, line_number)?,
             ("output", "default_exports") => {
                 self.output.default_exports = parse_string_array(value, line_number)?
             }
@@ -283,6 +320,20 @@ impl CliConfig {
             ("color", "default_targets") => {
                 self.color.default_targets = parse_string_array(value, line_number)?
             }
+            ("server", "host") => self.server.host = parse_string(value, line_number)?,
+            ("server", "port") => {
+                let port = parse_usize(value, line_number)?;
+                if port > u16::MAX as usize {
+                    return Err(ConfigError::new(format!(
+                        "line {line_number}: server.port must be <= {}",
+                        u16::MAX
+                    )));
+                }
+                self.server.port = port as u16;
+            }
+            ("server", "warn_non_localhost") => {
+                self.server.warn_non_localhost = parse_bool(value, line_number)?
+            }
             ("", _) => {
                 return Err(ConfigError::new(format!(
                     "line {line_number}: key must be inside a section"
@@ -300,7 +351,7 @@ impl CliConfig {
 
 pub fn config_path_from_args(args: &[String]) -> PathBuf {
     args.windows(2)
-        .find(|pair| pair[0] == "--path")
+        .find(|pair| pair[0] == "--path" || pair[0] == "--config")
         .map_or_else(default_config_path, |pair| PathBuf::from(&pair[1]))
 }
 

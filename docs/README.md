@@ -23,8 +23,10 @@ This `docs/` directory is the documentation root for the repository.
   step generation, family classification, and the full 64-family table.
 - [Export And Support Matrix](export-support.md): target exports, support
   statuses, round-trip error, and v1-beta unsupported/profile-required areas.
-- [Rust API](rust-api.md): core crate modules, public entry points, examples,
-  and important result structures.
+- [Native Rust SDK](rust-api.md): core crate modules, public entry points,
+  examples, and important result structures.
+- [Local Kernel API](local-api.md): localhost HTTP JSON API endpoints, request
+  and response envelopes, errors, and security notes.
 - [Limitations](limitations.md): what v1-beta intentionally does not implement.
 
 ## Current Implementation Scope
@@ -50,6 +52,7 @@ cargo run -p oci-cli -- encode "#E85A9A" --space hex
 cargo run -p oci-cli -- encode "#E85A9A" --space hex --format json
 cargo run -p oci-cli -- inspect OCI-1-48RS-327
 cargo run -p oci-cli -- registry info
+cargo run -p oci-cli -- serve
 cargo run -p oci-cli -- config
 ```
 

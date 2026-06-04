@@ -161,6 +161,8 @@ pub fn exports_json(exports: &ExportSet) -> String {
             "oklab".into(),
             "css".into(),
             "json-token".into(),
+            "swift".into(),
+            "tailwind".into(),
             "cmyk".into(),
         ],
     )

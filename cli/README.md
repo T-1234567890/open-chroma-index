@@ -72,21 +72,55 @@ oci encode "#E85A9A" --space hex
 oci inspect OCI-1-48RS-327
 oci export OCI-1-48RS-327 --to hex,oklch,css
 oci registry info
+oci serve
 oci config
 ```
 
 ## Command Structure
 
 ```text
-oci encode <INPUT> --space <SPACE> [--format json|pretty] [--precision <N>]
-oci inspect <OCI_ID> [--format json|pretty] [--exports all|none|summary|<LIST>]
-oci export <OCI_ID> --to <TARGETS> [--format json|plain|pretty]
-oci convert <INPUT> --from <SPACE> --to <TARGETS> [--format json|plain|pretty]
+oci encode <INPUT> --space <SPACE> [--format json|pretty] [--precision <N>] [--verify]
+oci inspect <OCI_ID> [--format json|pretty] [--exports all|none|summary|<LIST>] [--verify]
+oci export <OCI_ID> --to <TARGETS> [--format json|plain|pretty] [--verify]
+oci convert <INPUT> --from <SPACE> --to <TARGETS> [--format json|plain|pretty] [--verify]
+oci serve [--host <HOST>] [--port <PORT>] [--config <PATH>] [--json]
 oci registry <SUBCOMMAND>
 oci test <SUBCOMMAND>
 oci validate <TARGET> [--type id|registry|color]
 oci config [--path <TOML_PATH>]
 ```
+
+## Local Kernel API
+
+Start the Local Kernel API:
+
+```text
+oci serve
+```
+
+Default address:
+
+```text
+http://127.0.0.1:8765
+```
+
+Endpoint summary:
+
+```text
+GET  /v1/health
+POST /v1/encode
+POST /v1/inspect
+POST /v1/export
+POST /v1/convert
+GET  /v1/registry/info
+GET  /v1/registry/families
+GET  /v1/registry/family/{indexOrCode}
+GET  /v1/registry/step/{idOrStep}
+```
+
+The server is local by default and returns JSON envelopes for every endpoint.
+For request and response examples, see the main project documentation:
+[`../docs/local-api.md`](../docs/local-api.md).
 
 ## Config
 
@@ -117,6 +151,9 @@ oci config --path ./path/to/config.toml
 `json` is available for automation.
 
 `plain` is available for minimal scripting.
+
+Pretty output shows clean export values plus a compact verification block.
+Use `--verify` for detailed per-target status and round-trip errors.
 
 ## Relationship to the Kernel
 

@@ -6,7 +6,7 @@ The CLI uses a small internal parser. Arguments are positional plus long flags.
 Known flags that take values are:
 
 ```text
---space --format --precision --exports --to --from --type --path
+--space --format --precision --exports --to --from --type --path --config --host --port
 ```
 
 Default output comes from configuration. Built-in defaults use `pretty`. JSON is
@@ -15,10 +15,11 @@ always available with `--format json`.
 ## Command Summary
 
 ```text
-oci encode <INPUT> --space <SPACE> [--format json|pretty|plain] [--precision <N>] [--no-exports] [--path <TOML_PATH>]
-oci inspect <OCI_ID> [--format json|pretty|plain] [--exports all|none|summary|<LIST>] [--precision <N>] [--path <TOML_PATH>]
-oci export <OCI_ID> [--to <TARGETS>] [--format json|plain|pretty] [--path <TOML_PATH>]
-oci convert <INPUT> [--from <SPACE>] [--to <TARGETS>] [--format json|plain|pretty] [--precision <N>] [--path <TOML_PATH>]
+oci encode <INPUT> --space <SPACE> [--format json|pretty|plain] [--precision <N>] [--no-exports] [--verify] [--path <TOML_PATH>]
+oci inspect <OCI_ID> [--format json|pretty|plain] [--exports all|none|summary|<LIST>] [--precision <N>] [--verify] [--path <TOML_PATH>]
+oci export <OCI_ID> [--to <TARGETS>] [--format json|plain|pretty] [--verify] [--path <TOML_PATH>]
+oci convert <INPUT> [--from <SPACE>] [--to <TARGETS>] [--format json|plain|pretty] [--precision <N>] [--verify] [--path <TOML_PATH>]
+oci serve [--host <HOST>] [--port <PORT>] [--config <TOML_PATH>] [--json]
 oci registry <SUBCOMMAND> [--path <TOML_PATH>]
 oci test <SUBCOMMAND> [--path <TOML_PATH>]
 oci validate <TARGET> [--type id|registry|color] [--space <SPACE>] [--path <TOML_PATH>]
@@ -88,7 +89,7 @@ Purpose: convert an input color to canonical OKLCH, find the nearest registered
 base step, calculate offset, and print an OCI identity.
 
 ```text
-oci encode <INPUT> --space <SPACE> [--format json|pretty|plain] [--precision <N>] [--no-exports]
+oci encode <INPUT> --space <SPACE> [--format json|pretty|plain] [--precision <N>] [--no-exports] [--verify]
 ```
 
 Examples:
@@ -106,11 +107,16 @@ Pretty output includes:
 - `OCI standard color code`, the registered base code without offset
 - `OCI precision color code`, the code with OKLCH offset when an offset exists
 - canonical OKLCH
-- configured default exports unless hidden
+- every supported export target unless hidden
+- compact verification block
 - support matrix count unless hidden
 - warnings line unless hidden
 
 Plain output returns only the configured preferred OCI code.
+
+Pretty export lines do not include inline status or round-trip metadata. Use
+`--verify` to include detailed per-target verification lines after the compact
+verification block.
 
 JSON output includes:
 
@@ -135,7 +141,7 @@ Purpose: parse an OCI ID, decode the registered base step plus offset, and show
 canonical color plus exports.
 
 ```text
-oci inspect <OCI_ID> [--format json|pretty|plain] [--exports all|none|summary|<LIST>] [--precision <N>]
+oci inspect <OCI_ID> [--format json|pretty|plain] [--exports all|none|summary|<LIST>] [--precision <N>] [--verify]
 ```
 
 Examples:
@@ -149,19 +155,22 @@ oci inspect OCI-1-48RS-327@L-0.030857,C-0.010032,H+0.641361 --exports hex,oklch,
 `--exports` modes:
 
 - `none`: do not print exports.
-- `summary`: use `inspect.default_export_list` from config.
+- `summary`: all known export targets in the current implementation.
 - `list`: same behavior as `summary` in the current implementation.
 - `all`: all known export targets.
 - comma-separated list: selected export targets.
 
 Plain output returns the canonical short OCI ID.
 
+`--verify` includes detailed per-target status and round-trip error lines in
+pretty output.
+
 ## `oci export`
 
 Purpose: decode an OCI ID and export selected target representations.
 
 ```text
-oci export <OCI_ID> [--to <TARGETS>] [--format json|plain|pretty]
+oci export <OCI_ID> [--to <TARGETS>] [--format json|plain|pretty] [--verify]
 ```
 
 Examples:
@@ -172,6 +181,10 @@ oci export OCI-1-46PK-236 --to cmyk --format json
 ```
 
 If `--to` is omitted, the command uses `output.default_exports` from config.
+The built-in default includes every supported CLI export target.
+
+Pretty output includes selected export values plus a compact verification block.
+`--verify` adds detailed verification lines.
 
 ## `oci convert`
 
@@ -181,7 +194,7 @@ OKLCH and OCI identity, but the command's primary purpose is representation
 conversion.
 
 ```text
-oci convert <INPUT> [--from <SPACE>] [--to <TARGETS>] [--format json|plain|pretty] [--precision <N>]
+oci convert <INPUT> [--from <SPACE>] [--to <TARGETS>] [--format json|plain|pretty] [--precision <N>] [--verify]
 ```
 
 Examples:
@@ -193,6 +206,56 @@ oci convert "0.91 0.35 0.61" --from srgb --to hex,css
 
 If `--from` is omitted, it uses `color.default_input_space`. If `--to` is
 omitted, it uses `color.default_targets`.
+
+Pretty output includes selected export values plus a compact verification block.
+`--verify` adds detailed verification lines.
+
+## `oci serve`
+
+Purpose: start the Local Kernel API, a local, language-agnostic OCI HTTP JSON
+API. The server calls the same in-process kernel and CLI JSON result builders
+used by the command line client.
+
+```text
+oci serve [--host <HOST>] [--port <PORT>] [--config <TOML_PATH>] [--json]
+```
+
+Defaults:
+
+```text
+host: 127.0.0.1
+port: 8765
+```
+
+Examples:
+
+```text
+oci serve
+oci serve --port 9000
+oci serve --host 0.0.0.0 --port 8765
+oci serve --config /tmp/oci.toml --json
+```
+
+The server binds to `127.0.0.1` by default. If a non-localhost host is provided,
+the CLI prints a warning unless `server.warn_non_localhost` is false in config.
+The Local Kernel API always returns JSON, regardless of CLI pretty output
+defaults.
+
+Endpoint summary:
+
+```text
+GET  /v1/health
+POST /v1/encode
+POST /v1/inspect
+POST /v1/export
+POST /v1/convert
+GET  /v1/registry/info
+GET  /v1/registry/families
+GET  /v1/registry/family/{indexOrCode}
+GET  /v1/registry/step/{idOrStep}
+```
+
+See [Local Kernel API](local-api.md) for request and response examples.
 
 ## `oci registry`
 

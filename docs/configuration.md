@@ -17,7 +17,7 @@ Runtime config priority:
 
 ```text
 CLI flags
-custom config path passed with --path
+custom config path passed with --path or --config
 installed CLI config at <oci-install-dir>/config.toml
 built-in defaults
 ```
@@ -28,6 +28,7 @@ Examples:
 oci encode "#E85A9A" --space hex
 oci encode "#E85A9A" --space hex --path /tmp/oci.toml
 oci encode "#E85A9A" --space hex --path /tmp/oci.toml --format json
+oci serve --config /tmp/oci.toml --port 9000
 ```
 
 In the last example, `--format json` overrides `output.format` from the TOML
@@ -60,6 +61,9 @@ In an interactive terminal, the command prompts for:
 - registry source
 - registry path
 - registry validation behavior
+- Local Kernel API server host
+- Local Kernel API server port
+- whether to warn when the server is not bound to localhost
 
 In non-interactive execution, the command writes defaults without prompting.
 
@@ -74,7 +78,8 @@ precision = 6
 show_support = true
 show_warnings = true
 show_exports = true
-default_exports = ["hex", "oklch", "display-p3", "css"]
+verify = false
+default_exports = ["hex", "rgb", "hsl", "srgb", "display-p3", "adobe-rgb", "rec709", "oklch", "oklab", "css", "json-token", "swift", "tailwind", "cmyk"]
 
 [encode]
 include_offset = true
@@ -83,7 +88,7 @@ include_full_code = false
 
 [inspect]
 exports = "summary"
-default_export_list = ["hex", "oklch", "srgb", "display-p3"]
+default_export_list = ["hex", "rgb", "hsl", "srgb", "display-p3", "adobe-rgb", "rec709", "oklch", "oklab", "css", "json-token", "swift", "tailwind", "cmyk"]
 
 [registry]
 version = "v1"
@@ -94,6 +99,11 @@ validate_on_start = false
 [color]
 default_input_space = "hex"
 default_targets = ["hex", "oklch", "display-p3"]
+
+[server]
+host = "127.0.0.1"
+port = 8765
+warn_non_localhost = true
 ```
 
 ## Field Reference
@@ -106,8 +116,11 @@ default_targets = ["hex", "oklch", "display-p3"]
 - `show_warnings`: include warnings line in pretty output.
 - `show_exports`: include export section in pretty output and JSON encode
   output unless `--no-exports` is used.
-- `default_exports`: export targets used by `encode` pretty output and by
-  `export` when `--to` is omitted.
+- `verify`: include detailed per-target verification lines in pretty output.
+  Pretty output still includes the compact `verification:` block when exports
+  are visible.
+- `default_exports`: export targets used by `export` when `--to` is omitted.
+  Built-in defaults include every supported CLI export target.
 
 ### `[encode]`
 
@@ -120,8 +133,9 @@ default_targets = ["hex", "oklch", "display-p3"]
 
 - `exports`: default inspect export mode: `all`, `none`, `summary`, `list`, or a
   comma-separated list supplied with `--exports`.
-- `default_export_list`: targets used when inspect export mode is `summary` or
-  `list`.
+- `default_export_list`: stored config value for inspect summary/list behavior.
+  Built-in CLI behavior currently shows every supported CLI export target for
+  inspect `summary`, `list`, and `all`.
 
 ### `[registry]`
 
@@ -138,6 +152,23 @@ If `source` is not `bundled`, commands return `registry_error`.
 - `default_input_space`: used by `encode` and `convert` when the command does
   not provide `--space` or `--from`.
 - `default_targets`: used by `convert` when `--to` is omitted.
+
+### `[server]`
+
+- `host`: default host for `oci serve`. The built-in default is `127.0.0.1`.
+- `port`: default port for `oci serve`. The built-in default is `8765`.
+- `warn_non_localhost`: if true, `oci serve` prints a warning when bound to a
+  host other than `127.0.0.1`, `localhost`, or `::1`.
+
+CLI flags always override server config:
+
+```text
+oci serve --host 127.0.0.1 --port 9000
+oci serve --config /tmp/oci.toml --port 9000
+```
+
+The Local Kernel API always returns JSON. CLI output defaults such as
+`output.format = "pretty"` do not change API response envelopes.
 
 ## TOML Parser Notes
 

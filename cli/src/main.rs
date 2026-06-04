@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod output;
+mod server;
 
 use std::process::ExitCode;
 

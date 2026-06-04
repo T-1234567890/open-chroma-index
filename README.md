@@ -76,12 +76,30 @@ OCI precision color code: OCI-1-48RS-327@L-0.030857,C-0.010032,H+0.641361
 oklch: L=0.669143 C=0.185968 H=355.308028
 
 exports:
-  hex: #E85A9A (lossy, round-trip error 0.000000348709)
-  oklch: L=0.669143 C=0.185968 H=355.308028
-  display-p3: r=0.844459 g=0.389513 b=0.597250 (supported, round-trip error 0.000000024397)
-  css oklch: oklch(66.914300% 0.185968 355.308028deg)
-  css srgb: rgb(232 90 154)
-  css display-p3: color(display-p3 0.844459 0.389513 0.597250)
+  HEX: #E85A9A
+  RGB: r=232 g=90 b=154
+  HSL: h=332.957777 s=0.755319 l=0.631373
+  sRGB: r=0.909804 g=0.352942 b=0.603922
+  Display P3: r=0.844459 g=0.389513 b=0.597250
+  Adobe RGB: r=0.796456 g=0.354546 b=0.590583
+  Rec.709: r=0.898882 g=0.294851 b=0.562037
+  OKLCH: L=0.669143 C=0.185968 H=355.308028
+  OKLab: L=0.669143 a=0.185345 b=-0.015212
+  CSS OKLCH: oklch(66.914300% 0.185968 355.308028deg)
+  CSS sRGB: rgb(232 90 154)
+  CSS Display P3: color(display-p3 0.844459 0.389513 0.597250)
+  JSON token:
+    oklch: l=0.669143 c=0.185968 h=355.308028
+    oklab: l=0.669143 a=0.185345 b=-0.015212
+  Swift: Color(.displayP3, red: 0.844459, green: 0.389513, blue: 0.597250)
+  Tailwind: oci: oklch(66.914300% 0.185968 355.308028deg)
+  CMYK: unavailable
+
+verification:
+  lossy: HEX, RGB
+  supported: HSL, sRGB, Display P3, Adobe RGB, Rec.709, OKLCH, OKLab, CSS, JSON token, Swift, Tailwind
+  profile required: CMYK
+  max round-trip error: 0.000000348709
 
 support: 12 targets evaluated
 warnings: none
@@ -182,13 +200,83 @@ Basic commands:
 oci encode "#E85A9A" --space hex
 oci inspect OCI-1-48RS-327
 oci export OCI-1-48RS-327 --to hex,oklch,css
+oci serve
 oci config
 ```
 
-## Rust Library Usage
+## Local Kernel API
 
-The root crate is the OCI kernel/library crate. The Rust API is experimental
-while OCI is in v1-beta.
+The Local Kernel API is a local, language-agnostic HTTP JSON API for tools that
+should call the OCI kernel without linking Rust directly and without shelling
+out for every conversion.
+
+Start the server:
+
+```bash
+oci serve
+```
+
+By default it listens only on localhost:
+
+```text
+http://127.0.0.1:8765
+```
+
+The Local Kernel API is not a cloud service, does not use telemetry, and does
+not provide a remote hosted API. Binding to anything other than localhost
+requires an explicit `--host` flag and prints a warning.
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8765/v1/health
+```
+
+Encode with `curl`:
+
+```bash
+curl -s http://127.0.0.1:8765/v1/encode \
+  -H 'content-type: application/json' \
+  -d '{"input":"#E85A9A","space":"hex","precision":6}'
+```
+
+Python:
+
+```python
+import json
+import urllib.request
+
+request = urllib.request.Request(
+    "http://127.0.0.1:8765/v1/encode",
+    data=json.dumps({"input": "#E85A9A", "space": "hex"}).encode(),
+    headers={"content-type": "application/json"},
+)
+print(json.load(urllib.request.urlopen(request))["data"]["oci"]["precisionShort"])
+```
+
+JavaScript:
+
+```js
+const response = await fetch("http://127.0.0.1:8765/v1/encode", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ input: "#E85A9A", space: "hex" }),
+});
+const result = await response.json();
+console.log(result.data.oci.precisionShort);
+```
+
+The native Rust SDK remains available for direct Rust integration. For the full
+Local Kernel API contract, endpoints, error format, and security notes, see
+[Local Kernel API](docs/local-api.md).
+
+## Native Rust SDK Usage
+
+The root crate is the OCI kernel/library crate. The native Rust SDK is
+experimental while OCI is in beta.
+
+For dependency setup, import names, result structures, and more examples, see
+[Native Rust SDK](docs/rust-api.md).
 
 ```rust
 use oci_core::{encode_from_hex, Registry};
@@ -232,7 +320,7 @@ Published dependency:
 
 ```toml
 [dependencies]
-open-chroma-index = "0.1"
+open-chroma-index = "0.2"
 ```
 
 Local development dependency:

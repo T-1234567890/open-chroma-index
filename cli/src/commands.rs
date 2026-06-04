@@ -1,4 +1,4 @@
-use crate::config::{CliConfig, config_path_from_args};
+use crate::config::{CliConfig, all_export_targets, config_path_from_args};
 use crate::output;
 use oci_core::{
     ColorExport, ColorInput, EncodeResult, EncodedSrgb, ExportSet, FloatRgb, Hsl, InspectResult,
@@ -14,7 +14,7 @@ pub struct CliError {
 }
 
 impl CliError {
-    fn new(code: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &str, message: impl Into<String>) -> Self {
         Self {
             code: code.to_string(),
             message: message.into(),
@@ -41,14 +41,23 @@ pub fn run_cli(args: &[String]) -> Result<String, CliError> {
 
     let config = CliConfig::load_from_args(args).map_err(config_error)?;
 
+    run_cli_with_config(args, &config)
+}
+
+pub(crate) fn run_cli_with_config(args: &[String], config: &CliConfig) -> Result<String, CliError> {
+    let Some(command) = args.first().map(String::as_str) else {
+        return Err(CliError::new("parse_error", "missing command"));
+    };
+
     match command {
-        "encode" => cmd_encode(&args[1..], &config),
-        "inspect" => cmd_inspect(&args[1..], &config),
-        "export" => cmd_export(&args[1..], &config),
-        "convert" => cmd_convert(&args[1..], &config),
-        "registry" => cmd_registry(&args[1..], &config),
-        "test" => cmd_test(&args[1..], &config),
-        "validate" => cmd_validate(&args[1..], &config),
+        "encode" => cmd_encode(&args[1..], config),
+        "inspect" => cmd_inspect(&args[1..], config),
+        "export" => cmd_export(&args[1..], config),
+        "convert" => cmd_convert(&args[1..], config),
+        "serve" => cmd_serve(&args[1..], config),
+        "registry" => cmd_registry(&args[1..], config),
+        "test" => cmd_test(&args[1..], config),
+        "validate" => cmd_validate(&args[1..], config),
         _ => Err(CliError::new(
             "parse_error",
             format!("unknown command: {command}"),
@@ -65,10 +74,11 @@ fn help_text() -> String {
         "Open Chroma Index CLI",
         "",
         "Usage:",
-        "  oci encode <INPUT> --space <SPACE> [--format json|pretty|plain] [--precision <N>]",
-        "  oci inspect <OCI_ID> [--format json|pretty|plain] [--exports all|none|summary|<LIST>]",
-        "  oci export <OCI_ID> --to <TARGETS> [--format json|plain|pretty]",
-        "  oci convert <INPUT> --from <SPACE> --to <TARGETS> [--format json|plain|pretty]",
+        "  oci encode <INPUT> --space <SPACE> [--format json|pretty|plain] [--precision <N>] [--verify]",
+        "  oci inspect <OCI_ID> [--format json|pretty|plain] [--exports all|none|summary|<LIST>] [--verify]",
+        "  oci export <OCI_ID> --to <TARGETS> [--format json|plain|pretty] [--verify]",
+        "  oci convert <INPUT> --from <SPACE> --to <TARGETS> [--format json|plain|pretty] [--verify]",
+        "  oci serve [--host <HOST>] [--port <PORT>] [--config <PATH>] [--json]",
         "  oci registry <SUBCOMMAND>",
         "  oci test <SUBCOMMAND>",
         "  oci validate <TARGET> [--type id|registry|color]",
@@ -77,6 +87,7 @@ fn help_text() -> String {
         "Common commands:",
         "  oci encode \"#E85A9A\" --space hex",
         "  oci inspect OCI-1-48RS-327",
+        "  oci serve",
         "  oci registry validate",
     ]
     .join("\n")
@@ -93,6 +104,7 @@ fn cmd_encode(args: &[String], config: &CliConfig) -> Result<String, CliError> {
     let space = flag_value(args, "--space").unwrap_or(&config.color.default_input_space);
     let format = configured_format(args, config)?;
     let precision = configured_precision(args, config)?;
+    let verify = configured_verify(args, config);
     let include_exports = !has_flag(args, "--no-exports") && config.output.show_exports;
     let registry = load_registry(config)?;
     let color_input = parse_color_input(input, space, &registry)?;
@@ -104,7 +116,9 @@ fn cmd_encode(args: &[String], config: &CliConfig) -> Result<String, CliError> {
 
     match format {
         "json" => Ok(output::encode_json(input, space, &result, include_exports)),
-        "pretty" => Ok(encode_pretty(input, space, &result, config, precision)),
+        "pretty" => Ok(encode_pretty(
+            input, space, &result, config, precision, verify,
+        )),
         "plain" => Ok(preferred_oci_code(&result, config)),
         other => Err(CliError::new(
             "parse_error",
@@ -117,6 +131,7 @@ fn cmd_inspect(args: &[String], config: &CliConfig) -> Result<String, CliError> 
     let input = positional(args, 0, "OCI ID")?;
     let format = configured_format(args, config)?;
     let precision = configured_precision(args, config)?;
+    let verify = configured_verify(args, config);
     let exports = flag_value(args, "--exports").unwrap_or(&config.inspect.exports);
     let registry = load_registry(config)?;
     let id = OciId::parse_with_registry(input, &registry).map_err(id_error)?;
@@ -125,7 +140,9 @@ fn cmd_inspect(args: &[String], config: &CliConfig) -> Result<String, CliError> 
 
     match format {
         "json" => Ok(output::inspect_json(input, &result, include_exports)),
-        "pretty" => Ok(inspect_pretty(input, &result, config, exports, precision)),
+        "pretty" => Ok(inspect_pretty(
+            input, &result, config, exports, precision, verify,
+        )),
         "plain" => Ok(result.canonical_id.to_short_string()),
         other => Err(CliError::new(
             "parse_error",
@@ -140,6 +157,7 @@ fn cmd_export(args: &[String], config: &CliConfig) -> Result<String, CliError> {
         .map(parse_targets)
         .unwrap_or_else(|| config.output.default_exports.clone());
     let format = configured_format(args, config)?;
+    let verify = configured_verify(args, config);
     let registry = load_registry(config)?;
     let id = OciId::parse_with_registry(input, &registry).map_err(id_error)?;
     let color = decode_oci_id(&id, &registry).map_err(pipeline_error)?;
@@ -157,7 +175,7 @@ fn cmd_export(args: &[String], config: &CliConfig) -> Result<String, CliError> {
             })
             .collect::<Vec<_>>()
             .join("\n")),
-        "pretty" => Ok(selected_exports_pretty(&exports, &targets)),
+        "pretty" => Ok(exports_pretty(&exports, &targets, verify)),
         other => Err(CliError::new(
             "parse_error",
             format!("unsupported output format: {other}"),
@@ -173,6 +191,7 @@ fn cmd_convert(args: &[String], config: &CliConfig) -> Result<String, CliError> 
         .unwrap_or_else(|| config.color.default_targets.clone());
     let format = configured_format(args, config)?;
     let precision = configured_precision(args, config)?;
+    let verify = configured_verify(args, config);
     let registry = load_registry(config)?;
     let result =
         encode(parse_color_input(input, from, &registry)?, &registry).map_err(pipeline_error)?;
@@ -180,12 +199,24 @@ fn cmd_convert(args: &[String], config: &CliConfig) -> Result<String, CliError> 
     match format {
         "json" => Ok(output::convert_json(input, from, &result, &targets)),
         "plain" => Ok(output::selected_exports_json(&result.exports, &targets)),
-        "pretty" => Ok(convert_pretty(input, from, &result, &targets, precision)),
+        "pretty" => Ok(convert_pretty(
+            input, from, &result, &targets, precision, verify,
+        )),
         other => Err(CliError::new(
             "parse_error",
             format!("unsupported output format: {other}"),
         )),
     }
+}
+
+fn cmd_serve(args: &[String], config: &CliConfig) -> Result<String, CliError> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        return Ok(serve_help_text());
+    }
+
+    let options = crate::server::ServerOptions::from_args(args, config)?;
+    crate::server::serve(options, config.clone())?;
+    Ok(String::new())
 }
 
 fn cmd_registry(args: &[String], config: &CliConfig) -> Result<String, CliError> {
@@ -311,6 +342,7 @@ fn run_config_wizard(mut config: CliConfig, path: &std::path::Path) -> Result<Cl
     config.output.show_support = prompt_bool("show support matrix", config.output.show_support)?;
     config.output.show_warnings = prompt_bool("show warnings", config.output.show_warnings)?;
     config.output.show_exports = prompt_bool("show exports", config.output.show_exports)?;
+    config.output.verify = prompt_bool("show verification details", config.output.verify)?;
     config.encode.include_offset = prompt_bool(
         "include offset in encode output",
         config.encode.include_offset,
@@ -340,6 +372,12 @@ fn run_config_wizard(mut config: CliConfig, path: &std::path::Path) -> Result<Cl
         "validate registry on start",
         config.registry.validate_on_start,
     )?;
+    config.server.host = prompt_string("server host", &config.server.host)?;
+    config.server.port = prompt_usize("server port", config.server.port as usize)? as u16;
+    config.server.warn_non_localhost = prompt_bool(
+        "warn when server is not localhost",
+        config.server.warn_non_localhost,
+    )?;
 
     Ok(config)
 }
@@ -350,6 +388,7 @@ fn encode_pretty(
     result: &EncodeResult,
     config: &CliConfig,
     precision: usize,
+    verify: bool,
 ) -> String {
     let mut lines = vec![
         "OCI Encode".to_string(),
@@ -377,10 +416,10 @@ fn encode_pretty(
     if config.output.show_exports {
         lines.push(String::new());
         lines.push("exports:".to_string());
-        lines.push(indent(&selected_exports_pretty(
-            &result.exports,
-            &config.output.default_exports,
-        )));
+        let targets = all_export_targets();
+        lines.push(indent(&selected_exports_pretty(&result.exports, &targets)));
+        lines.push(String::new());
+        lines.push(verification_pretty(&result.exports, &targets, verify));
     }
     if config.output.show_support {
         lines.push(String::new());
@@ -402,6 +441,7 @@ fn inspect_pretty(
     config: &CliConfig,
     export_mode: &str,
     precision: usize,
+    verify: bool,
 ) -> String {
     let mut lines = vec![
         "OCI Inspect".to_string(),
@@ -426,6 +466,8 @@ fn inspect_pretty(
         lines.push(String::new());
         lines.push("exports:".to_string());
         lines.push(indent(&selected_exports_pretty(&result.exports, &targets)));
+        lines.push(String::new());
+        lines.push(verification_pretty(&result.exports, &targets, verify));
     }
     if config.output.show_support {
         lines.push(String::new());
@@ -447,13 +489,23 @@ fn convert_pretty(
     result: &EncodeResult,
     targets: &[String],
     precision: usize,
+    verify: bool,
 ) -> String {
     format!(
-        "OCI Convert\ninput: {input} ({from})\n\noklch: L={} C={} H={}\n\nexports:\n{}",
+        "OCI Convert\ninput: {input} ({from})\n\noklch: L={} C={} H={}\n\nexports:\n{}\n\n{}",
         fixed(result.decoded_oklch.l, precision),
         fixed(result.decoded_oklch.c, precision),
         fixed(result.decoded_oklch.h, precision),
-        indent(&selected_exports_pretty(&result.exports, targets))
+        indent(&selected_exports_pretty(&result.exports, targets)),
+        verification_pretty(&result.exports, targets, verify)
+    )
+}
+
+fn exports_pretty(exports: &ExportSet, targets: &[String], verify: bool) -> String {
+    format!(
+        "exports:\n{}\n\n{}",
+        indent(&selected_exports_pretty(exports, targets)),
+        verification_pretty(exports, targets, verify)
     )
 }
 
@@ -467,33 +519,33 @@ fn selected_exports_pretty(exports: &ExportSet, targets: &[String]) -> String {
 
 fn export_target_pretty(exports: &ExportSet, target: &str) -> String {
     match target {
-        "hex" => format_string_export("hex", &exports.hex),
-        "rgb" => format_rgb8_export("rgb", &exports.rgb),
-        "hsl" => format_hsl_export("hsl", &exports.hsl),
-        "srgb" => format_float_rgb_export("srgb", &exports.srgb_float),
-        "display-p3" => format_float_rgb_export("display-p3", &exports.display_p3_float),
-        "adobe-rgb" => format_float_rgb_export("adobe-rgb", &exports.adobe_rgb_1998_float),
-        "rec709" => format_float_rgb_export("rec709", &exports.rec709_float),
+        "hex" => format_string_export("HEX", &exports.hex),
+        "rgb" => format_rgb8_export("RGB", &exports.rgb),
+        "hsl" => format_hsl_export("HSL", &exports.hsl),
+        "srgb" => format_float_rgb_export("sRGB", &exports.srgb_float),
+        "display-p3" => format_float_rgb_export("Display P3", &exports.display_p3_float),
+        "adobe-rgb" => format_float_rgb_export("Adobe RGB", &exports.adobe_rgb_1998_float),
+        "rec709" => format_float_rgb_export("Rec.709", &exports.rec709_float),
         "oklch" => format!(
-            "oklch: L={:.6} C={:.6} H={:.6}",
+            "OKLCH: L={:.6} C={:.6} H={:.6}",
             exports.oklch.l, exports.oklch.c, exports.oklch.h
         ),
         "oklab" => format!(
-            "oklab: L={:.6} a={:.6} b={:.6}",
+            "OKLab: L={:.6} a={:.6} b={:.6}",
             exports.oklab.l, exports.oklab.a, exports.oklab.b
         ),
         "css" => {
-            let mut lines = vec![format!("css oklch: {}", exports.css.oklch)];
+            let mut lines = vec![format!("CSS OKLCH: {}", exports.css.oklch)];
             if let Some(srgb) = exports.css.srgb.as_deref() {
-                lines.push(format!("css srgb: {srgb}"));
+                lines.push(format!("CSS sRGB: {srgb}"));
             }
             if let Some(display_p3) = exports.css.display_p3.as_deref() {
-                lines.push(format!("css display-p3: {display_p3}"));
+                lines.push(format!("CSS Display P3: {display_p3}"));
             }
             lines.join("\n")
         }
         "json-token" => {
-            let mut lines = vec!["json-token:".to_string()];
+            let mut lines = vec!["JSON token:".to_string()];
             for value in &exports.json {
                 let components = value
                     .components
@@ -506,7 +558,7 @@ fn export_target_pretty(exports: &ExportSet, target: &str) -> String {
             lines.join("\n")
         }
         "swift" => format!(
-            "swift: Color(.displayP3, red: {:.6}, green: {:.6}, blue: {:.6})",
+            "Swift: Color(.displayP3, red: {:.6}, green: {:.6}, blue: {:.6})",
             exports
                 .display_p3_float
                 .value
@@ -523,64 +575,38 @@ fn export_target_pretty(exports: &ExportSet, target: &str) -> String {
                 .map(|rgb| rgb.b)
                 .unwrap_or(0.0)
         ),
-        "tailwind" => format!("tailwind: oci: {}", exports.css.oklch),
-        "cmyk" => format_string_export("cmyk", &exports.cmyk),
+        "tailwind" => format!("Tailwind: oci: {}", exports.css.oklch),
+        "cmyk" => format_string_export("CMYK", &exports.cmyk),
         _ => format!("{target}: unsupported"),
     }
 }
 
 fn format_string_export(label: &str, export: &ColorExport<String>) -> String {
     match export.value.as_deref() {
-        Some(value) => format!("{label}: {value}{}", export_details(export)),
-        None => format!("{label}: unavailable{}", export_details(export)),
+        Some(value) => format!("{label}: {value}"),
+        None => format!("{label}: unavailable"),
     }
 }
 
 fn format_float_rgb_export(label: &str, export: &ColorExport<FloatRgb>) -> String {
     match export.value {
-        Some(rgb) => format!(
-            "{label}: r={:.6} g={:.6} b={:.6}{}",
-            rgb.r,
-            rgb.g,
-            rgb.b,
-            export_details(export)
-        ),
-        None => format!("{label}: unavailable{}", export_details(export)),
+        Some(rgb) => format!("{label}: r={:.6} g={:.6} b={:.6}", rgb.r, rgb.g, rgb.b),
+        None => format!("{label}: unavailable"),
     }
 }
 
 fn format_rgb8_export(label: &str, export: &ColorExport<Rgb8>) -> String {
     match export.value {
-        Some(rgb) => format!(
-            "{label}: r={} g={} b={}{}",
-            rgb.r,
-            rgb.g,
-            rgb.b,
-            export_details(export)
-        ),
-        None => format!("{label}: unavailable{}", export_details(export)),
+        Some(rgb) => format!("{label}: r={} g={} b={}", rgb.r, rgb.g, rgb.b),
+        None => format!("{label}: unavailable"),
     }
 }
 
 fn format_hsl_export(label: &str, export: &ColorExport<Hsl>) -> String {
     match export.value {
-        Some(hsl) => format!(
-            "{label}: h={:.6} s={:.6} l={:.6}{}",
-            hsl.h,
-            hsl.s,
-            hsl.l,
-            export_details(export)
-        ),
-        None => format!("{label}: unavailable{}", export_details(export)),
+        Some(hsl) => format!("{label}: h={:.6} s={:.6} l={:.6}", hsl.h, hsl.s, hsl.l),
+        None => format!("{label}: unavailable"),
     }
-}
-
-fn export_details<T>(export: &ColorExport<T>) -> String {
-    let mut details = vec![status_label(export.status).to_string()];
-    if let Some(error) = export.round_trip_error {
-        details.push(format!("round-trip error {error:.12}"));
-    }
-    format!(" ({})", details.join(", "))
 }
 
 fn status_label(status: SupportStatus) -> &'static str {
@@ -593,6 +619,143 @@ fn status_label(status: SupportStatus) -> &'static str {
         SupportStatus::ProfileRequired => "profile_required",
         SupportStatus::ProofRequired => "proof_required",
         SupportStatus::UserSuppliedReference => "user_supplied_reference",
+    }
+}
+
+fn compact_status_label(status: SupportStatus) -> &'static str {
+    match status {
+        SupportStatus::Supported => "supported",
+        SupportStatus::Lossy => "lossy",
+        SupportStatus::GamutMapped => "gamut mapped",
+        SupportStatus::Approximation => "approximation",
+        SupportStatus::Unsupported => "unsupported",
+        SupportStatus::ProfileRequired => "profile required",
+        SupportStatus::ProofRequired => "proof required",
+        SupportStatus::UserSuppliedReference => "user supplied reference",
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PrettyVerification {
+    label: &'static str,
+    status: SupportStatus,
+    round_trip_error: Option<f64>,
+}
+
+fn verification_pretty(exports: &ExportSet, targets: &[String], detailed: bool) -> String {
+    let entries = verification_entries(exports, targets);
+    let mut lines = vec!["verification:".to_string()];
+
+    for status in [
+        SupportStatus::Lossy,
+        SupportStatus::Supported,
+        SupportStatus::GamutMapped,
+        SupportStatus::Approximation,
+        SupportStatus::Unsupported,
+        SupportStatus::ProfileRequired,
+        SupportStatus::ProofRequired,
+        SupportStatus::UserSuppliedReference,
+    ] {
+        let labels = entries
+            .iter()
+            .filter(|entry| entry.status == status)
+            .map(|entry| entry.label)
+            .collect::<Vec<_>>();
+        if !labels.is_empty() {
+            lines.push(format!(
+                "  {}: {}",
+                compact_status_label(status),
+                labels.join(", ")
+            ));
+        }
+    }
+
+    let max_error = entries
+        .iter()
+        .filter_map(|entry| entry.round_trip_error)
+        .fold(None, |max: Option<f64>, value| {
+            Some(max.map_or(value, |current| current.max(value)))
+        });
+    lines.push(format!(
+        "  max round-trip error: {}",
+        max_error.map_or_else(|| "none".to_string(), |value| format!("{value:.12}"))
+    ));
+
+    if detailed {
+        lines.push(String::new());
+        lines.push("verification details:".to_string());
+        for entry in entries {
+            let detail = entry.round_trip_error.map_or_else(
+                || status_label(entry.status).to_string(),
+                |error| {
+                    format!(
+                        "{}, round-trip error {error:.12}",
+                        status_label(entry.status)
+                    )
+                },
+            );
+            lines.push(format!("  {}: {detail}", entry.label));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn verification_entries(exports: &ExportSet, targets: &[String]) -> Vec<PrettyVerification> {
+    targets
+        .iter()
+        .filter_map(|target| match target.as_str() {
+            "hex" => Some(export_verification("HEX", &exports.hex)),
+            "rgb" => Some(export_verification("RGB", &exports.rgb)),
+            "hsl" => Some(export_verification("HSL", &exports.hsl)),
+            "srgb" => Some(export_verification("sRGB", &exports.srgb_float)),
+            "display-p3" => Some(export_verification("Display P3", &exports.display_p3_float)),
+            "adobe-rgb" => Some(export_verification(
+                "Adobe RGB",
+                &exports.adobe_rgb_1998_float,
+            )),
+            "rec709" => Some(export_verification("Rec.709", &exports.rec709_float)),
+            "oklch" => Some(PrettyVerification {
+                label: "OKLCH",
+                status: SupportStatus::Supported,
+                round_trip_error: Some(0.0),
+            }),
+            "oklab" => Some(PrettyVerification {
+                label: "OKLab",
+                status: SupportStatus::Supported,
+                round_trip_error: Some(0.0),
+            }),
+            "css" => Some(PrettyVerification {
+                label: "CSS",
+                status: SupportStatus::Supported,
+                round_trip_error: None,
+            }),
+            "json-token" => Some(PrettyVerification {
+                label: "JSON token",
+                status: SupportStatus::Supported,
+                round_trip_error: None,
+            }),
+            "swift" => Some(PrettyVerification {
+                label: "Swift",
+                status: SupportStatus::Supported,
+                round_trip_error: None,
+            }),
+            "tailwind" => Some(PrettyVerification {
+                label: "Tailwind",
+                status: SupportStatus::Supported,
+                round_trip_error: None,
+            }),
+            "cmyk" => Some(export_verification("CMYK", &exports.cmyk)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn export_verification<T>(label: &'static str, export: &ColorExport<T>) -> PrettyVerification {
+    PrettyVerification {
+        label,
+        status: export.status,
+        round_trip_error: export.round_trip_error,
     }
 }
 
@@ -646,24 +809,10 @@ fn base_full_string(id: &OciId) -> String {
     id.to_full_string()
 }
 
-fn inspect_targets(config: &CliConfig, export_mode: &str) -> Vec<String> {
+fn inspect_targets(_config: &CliConfig, export_mode: &str) -> Vec<String> {
     match export_mode {
         "none" => Vec::new(),
-        "all" => vec![
-            "hex".to_string(),
-            "rgb".to_string(),
-            "hsl".to_string(),
-            "srgb".to_string(),
-            "display-p3".to_string(),
-            "adobe-rgb".to_string(),
-            "rec709".to_string(),
-            "oklch".to_string(),
-            "oklab".to_string(),
-            "css".to_string(),
-            "json-token".to_string(),
-            "cmyk".to_string(),
-        ],
-        "summary" | "list" => config.inspect.default_export_list.clone(),
+        "all" | "summary" | "list" => all_export_targets(),
         value => parse_targets(value),
     }
 }
@@ -685,6 +834,10 @@ fn configured_precision(args: &[String], config: &CliConfig) -> Result<usize, Cl
             .parse::<usize>()
             .map_err(|_| CliError::new("parse_error", format!("invalid precision value: {value}")))
     })
+}
+
+fn configured_verify(args: &[String], config: &CliConfig) -> bool {
+    has_flag(args, "--verify") || config.output.verify
 }
 
 fn config_summary(config: &CliConfig) -> String {
@@ -1096,6 +1249,9 @@ fn flag_takes_value(flag: &str) -> bool {
             | "--from"
             | "--type"
             | "--path"
+            | "--config"
+            | "--host"
+            | "--port"
     )
 }
 
@@ -1107,6 +1263,31 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 
 fn has_flag(args: &[String], flag: &str) -> bool {
     args.iter().any(|arg| arg == flag)
+}
+
+fn serve_help_text() -> String {
+    [
+        "OCI Local Kernel API Server",
+        "",
+        "Usage:",
+        "  oci serve [--host <HOST>] [--port <PORT>] [--config <PATH>] [--json]",
+        "",
+        "Defaults:",
+        "  host: 127.0.0.1",
+        "  port: 8765",
+        "",
+        "Endpoints:",
+        "  GET  /v1/health",
+        "  POST /v1/encode",
+        "  POST /v1/inspect",
+        "  POST /v1/export",
+        "  POST /v1/convert",
+        "  GET  /v1/registry/info",
+        "  GET  /v1/registry/families",
+        "  GET  /v1/registry/family/{indexOrCode}",
+        "  GET  /v1/registry/step/{idOrStep}",
+    ]
+    .join("\n")
 }
 
 fn pipeline_error(error: oci_core::OciPipelineError) -> CliError {
@@ -1160,6 +1341,44 @@ mod tests {
         std::env::temp_dir().join(format!("oci-{name}-{}.toml", std::process::id()))
     }
 
+    fn assert_all_supported_exports_are_visible(out: &str) {
+        for expected in [
+            "HEX:",
+            "RGB:",
+            "HSL:",
+            "sRGB:",
+            "Display P3:",
+            "Adobe RGB:",
+            "Rec.709:",
+            "OKLCH:",
+            "OKLab:",
+            "CSS OKLCH:",
+            "CSS sRGB:",
+            "CSS Display P3:",
+            "JSON token:",
+            "Swift:",
+            "Tailwind:",
+            "CMYK:",
+        ] {
+            assert!(out.contains(expected), "missing export line: {expected}");
+        }
+    }
+
+    fn assert_no_inline_verification_metadata(out: &str) {
+        assert!(!out.contains("(lossy"));
+        assert!(!out.contains("(supported"));
+        assert!(!out.contains("(profile_required"));
+        assert!(!out.contains("round-trip error") || out.contains("verification:"));
+    }
+
+    fn assert_compact_verification_is_visible(out: &str) {
+        assert!(out.contains("\n\nverification:\n"));
+        assert!(out.contains("lossy: HEX, RGB"));
+        assert!(out.contains("supported:"));
+        assert!(out.contains("profile required: CMYK"));
+        assert!(out.contains("max round-trip error:"));
+    }
+
     #[test]
     fn parses_encode_command_and_emits_pretty_by_default() {
         let out = run_cli(&args(&["encode", "#E85A9A", "--space", "hex"])).unwrap();
@@ -1171,8 +1390,12 @@ mod tests {
         assert!(out.contains("@L"));
         assert!(out.contains("\n\nOCI standard color code:"));
         assert!(out.contains("\n\nexports:"));
-        assert!(out.contains("css oklch:"));
-        assert!(!out.contains("css:\n"));
+        assert!(out.contains("CSS OKLCH:"));
+        assert!(!out.contains("CSS:\n"));
+        assert_all_supported_exports_are_visible(&out);
+        assert_no_inline_verification_metadata(&out);
+        assert_compact_verification_is_visible(&out);
+        assert!(!out.contains("verification details:"));
     }
 
     #[test]
@@ -1180,9 +1403,17 @@ mod tests {
         let help = run_cli(&args(&["--help"])).unwrap();
         assert!(help.contains("Open Chroma Index CLI"));
         assert!(help.contains("oci encode <INPUT>"));
+        assert!(help.contains("oci serve"));
 
         let version = run_cli(&args(&["--version"])).unwrap();
         assert!(version.starts_with("oci "));
+    }
+
+    #[test]
+    fn serve_help_exists() {
+        let help = run_cli(&args(&["serve", "--help"])).unwrap();
+        assert!(help.contains("OCI Local Kernel API Server"));
+        assert!(help.contains("GET  /v1/health"));
     }
 
     #[test]
@@ -1194,19 +1425,23 @@ mod tests {
         assert!(out.starts_with('{'));
         assert!(out.contains("\"sourceSpace\":\"hex\""));
         assert!(out.contains("\"oci\""));
+        assert!(out.contains("\"swift\""));
+        assert!(out.contains("\"tailwind\""));
+        assert!(out.contains("\"cmyk\""));
+        assert!(out.contains("\"roundTripError\""));
+        assert!(out.contains("\"status\":\"lossy\""));
     }
 
     #[test]
     fn inspect_command_has_expected_structure() {
-        let out = run_cli(&args(&[
-            "inspect",
-            "OCI-1-46PK-236@L+0.001000,C+0.000000,H+0.000000",
-        ]))
-        .unwrap();
+        let out = run_cli(&args(&["inspect", "OCI-1-48RS-327"])).unwrap();
         assert!(out.contains("OCI Inspect"));
-        assert!(out.contains("OCI standard color code: OCI-1-46PK-236\n"));
+        assert!(out.contains("OCI standard color code: OCI-1-48RS-327\n"));
         assert!(out.contains("exports:"));
-        assert!(out.contains("oklch:"));
+        assert!(out.contains("OKLCH:"));
+        assert_all_supported_exports_are_visible(&out);
+        assert_no_inline_verification_metadata(&out);
+        assert_compact_verification_is_visible(&out);
     }
 
     #[test]
@@ -1219,10 +1454,11 @@ mod tests {
         ]))
         .unwrap();
         assert!(!out.contains("{\""));
-        assert!(out.contains("hex:"));
-        assert!(out.contains("oklch:"));
-        assert!(out.contains("cmyk:"));
-        assert!(out.contains("profile_required"));
+        assert!(out.contains("HEX:"));
+        assert!(out.contains("OKLCH:"));
+        assert!(out.contains("CMYK:"));
+        assert!(out.contains("profile required: CMYK"));
+        assert_no_inline_verification_metadata(&out);
     }
 
     #[test]
@@ -1238,6 +1474,66 @@ mod tests {
         .unwrap();
         assert!(out.contains("OCI Convert"));
         assert!(out.contains("exports:"));
+        assert!(out.contains("verification:"));
+        assert_no_inline_verification_metadata(&out);
+    }
+
+    #[test]
+    fn verify_flag_shows_detailed_verification() {
+        let out = run_cli(&args(&["encode", "#E85A9A", "--space", "hex", "--verify"])).unwrap();
+        assert!(out.contains("verification details:"));
+        assert!(out.contains("HEX: lossy, round-trip error"));
+        assert!(out.contains("sRGB: supported, round-trip error"));
+        assert!(out.contains("CMYK: profile_required"));
+    }
+
+    #[test]
+    fn config_verify_true_enables_detailed_verification() {
+        let path = temp_config_path("verify-enabled");
+        fs::write(&path, "[output]\nverify = true\n").unwrap();
+
+        let out = run_cli(&args(&[
+            "inspect",
+            "OCI-1-48RS-327",
+            "--path",
+            path.to_str().unwrap(),
+        ]))
+        .unwrap();
+        assert!(out.contains("verification details:"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn verify_flag_overrides_false_config() {
+        let path = temp_config_path("verify-override");
+        fs::write(&path, "[output]\nverify = false\n").unwrap();
+
+        let out = run_cli(&args(&[
+            "export",
+            "OCI-1-48RS-327",
+            "--to",
+            "hex,rgb,cmyk",
+            "--verify",
+            "--path",
+            path.to_str().unwrap(),
+        ]))
+        .unwrap();
+        assert!(out.contains("verification details:"));
+        assert!(out.contains("HEX: lossy, round-trip error"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn plain_output_remains_minimal() {
+        let out = run_cli(&args(&[
+            "encode", "#E85A9A", "--space", "hex", "--format", "plain",
+        ]))
+        .unwrap();
+        assert!(out.starts_with("OCI-1-"));
+        assert!(!out.contains("exports:"));
+        assert!(!out.contains("verification:"));
     }
 
     #[test]
@@ -1246,6 +1542,8 @@ mod tests {
         assert_eq!(config.output.format, "pretty");
         assert_eq!(config.output.precision, 6);
         assert_eq!(config.registry.source, "bundled");
+        assert_eq!(config.server.host, "127.0.0.1");
+        assert_eq!(config.server.port, 8765);
     }
 
     #[test]
