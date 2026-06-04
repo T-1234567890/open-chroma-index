@@ -1,6 +1,6 @@
 [package]
 name = "oci-cli"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 license = "Apache-2.0"
 description = "Command-line client for Open Chroma Index."
@@ -15,5 +15,5 @@ name = "oci"
 path = "src/main.rs"
 
 [dependencies]
-oci_core = { package = "open-chroma-index", path = "..", version = "0.2.1" }
+oci_core = { package = "open-chroma-index", path = "..", version = "0.2.3" }
 tiny_http = "0.12"
