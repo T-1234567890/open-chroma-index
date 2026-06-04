@@ -1,0 +1,19 @@
+[
+  {"name":"hex pink input","kind":"encode","input":"#E85A9A","sourceSpace":"hex","expectedFields":["oci.short","oci.full","canonical.oklch","support"],"maxError":0.00001,"notes":"Structure and low round-trip error vector for common HEX input."},
+  {"name":"rgb pink input","kind":"encode","input":"232,90,154","sourceSpace":"rgb","expectedFields":["oci.short","oci.full"],"maxError":0.00001,"notes":"RGB is parsed as 8-bit sRGB."},
+  {"name":"hsl pink input","kind":"encode","input":"333,0.75,0.63","sourceSpace":"hsl","expectedFields":["oci.short","canonical.oklch"],"maxError":0.00001,"notes":"HSL is an sRGB representation."},
+  {"name":"display p3 float input","kind":"encode","input":"0.85,0.40,0.60","sourceSpace":"display-p3","expectedFields":["oci.short","exports.displayP3"],"maxError":0.00001,"notes":"Display P3 floats are encoded through canonical OKLCH."},
+  {"name":"adobe rgb float input","kind":"encode","input":"0.80,0.45,0.62","sourceSpace":"adobe-rgb","expectedFields":["oci.short","exports.adobeRgb1998"],"maxError":0.00001,"notes":"Adobe RGB 1998 floats are encoded through canonical OKLCH."},
+  {"name":"rec709 float input","kind":"encode","input":"0.82,0.36,0.58","sourceSpace":"rec709","expectedFields":["oci.short","exports.rec709"],"maxError":0.00001,"notes":"Rec.709 transfer functions are used."},
+  {"name":"oklch input","kind":"encode","input":"0.70,0.12,333.0","sourceSpace":"oklch","expectedFields":["oci.short","offset"],"maxError":0.00001,"notes":"Canonical input path."},
+  {"name":"oklab input","kind":"encode","input":"0.70,0.12,-0.02","sourceSpace":"oklab","expectedFields":["oci.short","canonical.oklab"],"maxError":0.00001,"notes":"OKLab converts to OKLCH before encoding."},
+  {"name":"oci short base id","kind":"inspect","input":"OCI-1-46PK-236","sourceSpace":"oci","expectedFields":["canonical.oklch","exports","support"],"maxError":0.0,"notes":"Short base ID."},
+  {"name":"oci full base id","kind":"inspect","input":"OCI-1-46PK-A2-L12-C06","sourceSpace":"oci","expectedFields":["canonical.oklch","exports","support"],"maxError":0.0,"notes":"Full base ID."},
+  {"name":"oci short precision id","kind":"inspect","input":"OCI-1-46PK-236@L+0.002134,C-0.001042,H+0.218400","sourceSpace":"oci","expectedFields":["offset","canonical.oklch"],"maxError":0.0,"notes":"Short precision ID with OKLCH offsets."},
+  {"name":"oci full precision id","kind":"inspect","input":"OCI-1-46PK-A2-L12-C06@L+0.002134,C-0.001042,H+0.218400","sourceSpace":"oci","expectedFields":["offset","canonical.oklch"],"maxError":0.0,"notes":"Full precision ID with OKLCH offsets."},
+  {"name":"invalid family code","kind":"invalid","input":"OCI-1-46X!-236","sourceSpace":"oci","expectedFields":["error.invalid_family"],"maxError":0.0,"notes":"Family code must be two uppercase ASCII letters and match registry data."},
+  {"name":"invalid step number","kind":"invalid","input":"OCI-1-46PK-999","sourceSpace":"oci","expectedFields":["error.invalid_step"],"maxError":0.0,"notes":"Step numbers are 001..360."},
+  {"name":"invalid offset","kind":"invalid","input":"OCI-1-46PK-236@L+0.1,C+0.000000,H+0.000000","sourceSpace":"oci","expectedFields":["error.invalid_offset"],"maxError":0.0,"notes":"Offsets use exactly six decimal places."},
+  {"name":"hue wraparound near zero","kind":"inspect","input":"OCI-1-00RD-001@L+0.000000,C+0.000000,H-1.137500","sourceSpace":"oci","expectedFields":["canonical.oklch.h"],"maxError":0.000001,"notes":"Hue wraps to 359.800000."},
+  {"name":"out of gamut support example","kind":"support","input":"0.50,10.0,140.0","sourceSpace":"oklch","expectedFields":["support.unsupported"],"maxError":0.0,"notes":"Out-of-gamut target exports must not be marked supported."}
+]

@@ -1,0 +1,16 @@
+{
+  "name":"Open Chroma Index Registry",
+  "version":"1-beta",
+  "canonicalModel":"OKLCH/OKLab",
+  "familyCount":64,
+  "stepsPerFamily":360,
+  "hueAnchorsPerFamily":3,
+  "lightnessLevels":12,
+  "chromaLevels":10,
+  "totalRegisteredBaseSteps":23040,
+  "offsetPrecision":6,
+  "familyModel":"semantic-v1-beta",
+  "testVectorCount":17,
+  "maxChromaStatus":"placeholder",
+  "maxChromaNote":"v1-beta uses deterministic semantic placeholder maxChroma rules by family class. Chromatic families use higher chroma, earth/muted families use reduced chroma, and grayscale/neutral families use very low chroma. It is not an ICC or sRGB gamut search and is frozen for registry stability."
+}

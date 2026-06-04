@@ -1,0 +1,10 @@
+{
+  "algorithm": "sha256",
+  "files":[
+    {"path": "registry/v1/families.json", "sha256": "204087558cd5fb0669a633a3a083c5214aabadfd7a233a1836819bb76dc8616e"},
+    {"path": "registry/v1/steps.json", "sha256": "af629cd062008c61158332df927cfc0c19da2cec1e076895159a56d93a29d65e"},
+    {"path": "registry/v1/test-vectors.json", "sha256": "19442b394f641780b6a3ad44b3f1c13a8fa4be5cb4bd8068efa9e7cc5a79a02e"},
+    {"path": "registry/v1/schema.json", "sha256": "8f2f71900c0ab3363ec6f2d3b3e7f8cc2a6621fb75b9bd4024a693a81f619b39"},
+    {"path": "registry/v1/metadata.json", "sha256": "78118e94f957781ef2eed7010fe400f2e1770316a5fc3527d3a4e75b3ac0c0d1"}
+  ]
+}

@@ -1,0 +1,42 @@
+[package]
+name = "open-chroma-index"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Open Chroma Index's color identity kernel."
+readme = "README.md"
+repository = "https://github.com/T-1234567890/open-chroma-index"
+documentation = "https://github.com/T-1234567890/open-chroma-index/tree/main/docs"
+keywords = ["color", "oklch", "oklab", "graphics", "palette"]
+categories = ["graphics"]
+exclude = [
+  "cli/**",
+  "tools/**",
+  "install.sh",
+  "target/**",
+  "tmp/**",
+  ".git/**",
+  ".github/**",
+  ".idea/**",
+  ".vscode/**",
+  ".codex/**",
+  ".agents/**",
+  ".DS_Store",
+  "**/.DS_Store",
+  "*.log",
+  ".env",
+  ".env.*"
+]
+
+[lib]
+name = "oci_core"
+path = "src/lib.rs"
+
+[workspace]
+members = ["cli", "tools/generate-registry"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/T-1234567890/open-chroma-index"

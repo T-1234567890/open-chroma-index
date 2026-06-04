@@ -1,0 +1,33 @@
+{
+  "schema": "oci-registry-v1-beta",
+  "familyObject": {
+    "required": ["id", "index", "code", "name", "group", "classification", "hueStart", "hueEnd"],
+    "classificationEnum": ["chromatic", "earth_muted", "neutral"],
+    "description": "Frozen family record. id is two digit index plus two letter code. classification separates hue-based chromatic families from semantic earth/muted and neutral families."
+  },
+  "stepObject": {
+    "required": ["id", "shortId", "familyId", "familyIndex", "familyCode", "stepNumber", "anchor", "lightnessLevel", "chromaLevel", "hue", "lightness", "chromaRatio", "chroma"],
+    "description": "Frozen registered base step record in canonical OKLCH scalar fields."
+  },
+  "shortOciId": "OCI-1-46PK-236",
+  "fullOciId": "OCI-1-46PK-A2-L12-C06",
+  "offsetString": "@L+0.000000,C-0.000000,H+0.000000",
+  "supportStatusEnum": ["supported", "lossy", "gamut_mapped", "approximation", "unsupported", "profile_required", "proof_required", "user_supplied_reference"],
+  "exportResult": {
+    "required": ["status", "value", "roundTripError"],
+    "description": "Target export value plus support status and optional OKLab round-trip error."
+  },
+  "encodeResult": {
+    "required": ["input", "sourceSpace", "canonical", "oci", "offset", "exports", "support", "warnings"]
+  },
+  "inspectResult": {
+    "required": ["oci", "offset", "canonical", "exports", "support", "warnings"]
+  },
+  "testVectorObject": {
+    "required": ["name", "kind", "input", "sourceSpace", "expectedFields", "maxError", "notes"]
+  },
+  "checksumObject": {
+    "algorithm": "sha256",
+    "required": ["path", "sha256"]
+  }
+}

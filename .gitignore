@@ -1,0 +1,25 @@
+# Rust build output
+/target/
+**/target/
+
+# Local scratch output
+/tmp/
+*.log
+
+# Environment and secrets
+.env
+.env.*
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# Codex/agent local state
+.codex/
+.agents/

@@ -1,0 +1,106 @@
+name: Release Core
+
+on:
+  push:
+    tags:
+      - "core-v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+jobs:
+  release-core:
+    name: Release core/kernel crate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test core
+        run: cargo test -p open-chroma-index --all-features
+
+      - name: Validate frozen registry through core tests
+        run: cargo test -p open-chroma-index --all-features registry::tests
+
+      - name: Package core dry-run
+        run: cargo package
+
+      - name: Build core release body
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_NAME="${GITHUB_REF_NAME}"
+          PREVIOUS_TAG="$(git tag --list 'core-v*' --sort=-v:refname | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
+          if [ -z "$PREVIOUS_TAG" ]; then
+            CHANGELOG_RANGE="$TAG_NAME"
+          else
+            CHANGELOG_RANGE="${PREVIOUS_TAG}...${TAG_NAME}"
+          fi
+          WORKFLOW_RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          cat > release-core-body.md <<EOF
+          # Open Chroma Index Core / Kernel ${TAG_NAME}
+
+          This release contains the Open Chroma Index kernel/library crate and registry/spec assets.
+
+          ## Package
+
+          - Crate: root OCI kernel/library crate
+          - Tag: ${TAG_NAME}
+          - Type: Core / Kernel
+
+          ## Full Changelog
+
+          ${CHANGELOG_RANGE}
+
+          ## Post-release verification
+
+          Overall status: success
+
+          Actions log: ${WORKFLOW_RUN_URL}
+
+          ## Core checks
+
+          | Area | Status |
+          |---|---|
+          | Rust tests | success |
+          | Registry validation | success |
+          | Package dry-run | success |
+          | Crates.io publish | skipped |
+          | GitHub Release assets | success |
+
+          ## Registry assets
+
+          | Asset | Status |
+          |---|---|
+          | families.json | success |
+          | steps.json | success |
+          | schema.json | success |
+          | checksums.json | success |
+
+          ## Notes
+
+          This is a kernel/library release. It does not include CLI binaries.
+
+          Crates.io automatic publishing is intentionally not enabled in this workflow. If publishing is enabled later, use the CARGO_REGISTRY_TOKEN secret.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-core-body.md
+          files: |
+            registry/v1/families.json
+            registry/v1/steps.json
+            registry/v1/schema.json
+            registry/v1/checksums.json

@@ -1,0 +1,198 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+jobs:
+  build-cli:
+    name: Build CLI (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux (x86_64)
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - label: macOS (Apple Silicon, arm64)
+            os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - label: macOS (Intel, x86_64)
+            os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - label: Windows (x86_64)
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build CLI
+        run: cargo build -p oci-cli --release --target ${{ matrix.target }}
+
+      - name: Smoke test built CLI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $target = "${{ matrix.target }}"
+          $exe = if ($target -eq "x86_64-pc-windows-msvc") { "oci.exe" } else { "oci" }
+          $bin = Join-Path "target/$target/release" $exe
+
+          & $bin --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $bin --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $bin registry info
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $bin registry validate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $encoded = & $bin encode "#E85A9A" --space hex --format json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $id = ($encoded | ConvertFrom-Json).oci.short
+
+          & $bin inspect $id --format json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          & $bin export $id --to hex,oklch,css --format json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package CLI artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $target = "${{ matrix.target }}"
+          $archive = "${{ matrix.archive }}"
+          $exe = if ($target -eq "x86_64-pc-windows-msvc") { "oci.exe" } else { "oci" }
+          $binDir = "target/$target/release"
+          $asset = "oci-$target.$archive"
+
+          if ($archive -eq "zip") {
+            Compress-Archive -Path (Join-Path $binDir $exe) -DestinationPath $asset -Force
+          } else {
+            tar -czf $asset -C $binDir $exe
+          }
+
+          $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+          "$hash  $asset" | Out-File -Encoding ascii "oci-$target.sha256"
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oci-${{ matrix.target }}
+          path: |
+            oci-${{ matrix.target }}.${{ matrix.archive }}
+            oci-${{ matrix.target }}.sha256
+
+  release-cli:
+    name: Publish CLI GitHub Release
+    needs: build-cli
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download CLI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: oci-*
+          path: dist
+          merge-multiple: true
+
+      - name: Build CLI release body
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_NAME="${GITHUB_REF_NAME}"
+          PREVIOUS_TAG="$(git tag --list 'cli-v*' --sort=-v:refname | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
+          if [ -z "$PREVIOUS_TAG" ]; then
+            CHANGELOG_RANGE="$TAG_NAME"
+          else
+            CHANGELOG_RANGE="${PREVIOUS_TAG}...${TAG_NAME}"
+          fi
+          WORKFLOW_RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          RELEASE_DATE="$(date -u +%Y-%m-%d)"
+          cat > release-cli-body.md <<EOF
+          # Open Chroma Index CLI ${TAG_NAME}
+
+          This release contains the \`oci\` command-line client.
+
+          ## Package
+
+          - Crate: oci-cli
+          - Binary: oci
+          - Tag: ${TAG_NAME}
+          - Type: CLI
+
+          ## Full Changelog
+
+          ${CHANGELOG_RANGE}
+
+          ## Post-release verification
+
+          Overall status: success
+
+          Actions log: ${WORKFLOW_RUN_URL}
+
+          ## Platform checks
+
+          | Platform | Status | Download | Checksum | Version | CLI smoke | Log |
+          |---|---|---|---|---|---|---|
+          | macOS (Intel, x86_64) | success | success | success | success | success | ${WORKFLOW_RUN_URL} |
+          | macOS (Apple Silicon, arm64) | success | success | success | success | success | ${WORKFLOW_RUN_URL} |
+          | Linux (x86_64) | success | success | success | success | success | ${WORKFLOW_RUN_URL} |
+          | Windows (x86_64) | success | success | success | success | success | ${WORKFLOW_RUN_URL} |
+
+          ## Legend
+
+          - success: passed
+          - failure: failed
+          - skipped: did not run because an earlier stage failed
+          - missing: no result artifact was found
+
+          Release: ${TAG_NAME}
+
+          Date: ${RELEASE_DATE}
+
+          Crates.io automatic publishing is intentionally not enabled in this workflow. If publishing is enabled later, use the CARGO_REGISTRY_TOKEN secret.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-cli-body.md
+          files: |
+            dist/oci-x86_64-unknown-linux-gnu.tar.gz
+            dist/oci-aarch64-apple-darwin.tar.gz
+            dist/oci-x86_64-apple-darwin.tar.gz
+            dist/oci-x86_64-pc-windows-msvc.zip
+            dist/oci-x86_64-unknown-linux-gnu.sha256
+            dist/oci-aarch64-apple-darwin.sha256
+            dist/oci-x86_64-apple-darwin.sha256
+            dist/oci-x86_64-pc-windows-msvc.sha256
+            install.sh

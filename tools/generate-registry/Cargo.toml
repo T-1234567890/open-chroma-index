@@ -1,0 +1,14 @@
+[package]
+name = "generate-registry"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/T-1234567890/open-chroma-index"
+publish = false
+
+[[bin]]
+name = "generate-registry"
+path = "src/main.rs"
+
+[dependencies]
+oci_core = { package = "open-chroma-index", path = "../.." }
