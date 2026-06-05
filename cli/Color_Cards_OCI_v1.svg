@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="OCI_SWATCH_CARD_TEMPLATE" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 141.73 425.2">
+  <defs>
+    <style>
+      .title {
+        fill: #231815;
+        font-family: "SF Pro", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 16px;
+        font-variation-settings: 'wdth' 100, 'opsz' 28, 'wght' 400;
+      }
+
+      .label {
+        fill: #231815;
+        font-family: "SF Pro", "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 6px;
+        font-variation-settings: 'wdth' 100, 'opsz' 28, 'wght' 400;
+      }
+
+      .value {
+        fill: #4d4d4d;
+        font-family: "SF Pro", "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 6px;
+        font-variation-settings: 'wdth' 100, 'opsz' 28, 'wght' 400;
+      }
+
+      .brand {
+        fill: #7f8080;
+        font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+        font-size: 8px;
+      }
+    </style>
+  </defs>
+
+  <!-- Main color block: CLI should replace {{OKLCH}} with values like
+       69.586500% 0.149074 162.505253deg -->
+  <rect id="COLOR_BLOCK" y="161.41" width="141.73" height="261.86" fill="oklch({{OKLCH}})"/>
+
+  <!-- Main code -->
+  <text id="TEXT_OCI_SHORT" class="title" transform="translate(3.23 16.56)">
+    <tspan x="0" y="0">{{OCI_SHORT}}</tspan>
+  </text>
+
+  <!-- Family label -->
+  <text id="TEXT_FAMILY" class="title" transform="translate(3.23 35.76)">
+    <tspan x="0" y="0">{{FAMILY_NAME}}&#9;{{FAMILY_CODE}}</tspan>
+  </text>
+
+  <!-- Brand / standard name -->
+  <text id="TEXT_BRAND" class="brand" transform="translate(27.95 157.98)">
+    <tspan x="0" y="0">Open Chroma Index</tspan>
+  </text>
+
+  <!-- Technical values: each row uses one standard space between label and value. -->
+  <text id="TEXT_VALUES" transform="translate(3.23 58.75)">
+    <tspan class="label" x="0" y="0">HEX </tspan><tspan class="value">{{HEX}}</tspan>
+
+    <tspan class="label" x="0" y="7.2">RGB </tspan><tspan class="value">{{RGB}}</tspan>
+
+    <tspan class="label" x="0" y="14.4">HSL </tspan><tspan class="value">{{HSL}}</tspan>
+
+    <tspan class="label" x="0" y="21.6">sRGB </tspan><tspan class="value">{{SRGB}}</tspan>
+
+    <tspan class="label" x="0" y="28.8">Display P3 </tspan><tspan class="value">{{DISPLAY_P3}}</tspan>
+
+    <tspan class="label" x="0" y="36">Adobe RGB </tspan><tspan class="value">{{ADOBE_RGB}}</tspan>
+
+    <tspan class="label" x="0" y="43.2">Rec.709 </tspan><tspan class="value">{{REC709}}</tspan>
+
+    <tspan class="label" x="0" y="50.4">OKLCH </tspan><tspan class="value">{{OKLCH}}</tspan>
+
+    <tspan class="label" x="0" y="57.6">OKLab </tspan><tspan class="value">{{OKLAB}}</tspan>
+  </text>
+</svg>

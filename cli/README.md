@@ -72,6 +72,7 @@ oci encode "#E85A9A" --space hex
 oci inspect OCI-1-48RS-327
 oci export OCI-1-48RS-327 --to hex,oklch,css
 oci registry info
+oci swatch gen --id OCI-1-22TL-326 --template Color_Cards_OCI_v1.svg --out out/
 oci serve
 oci config
 ```
@@ -84,11 +85,20 @@ oci inspect <OCI_ID> [--format json|pretty] [--exports all|none|summary|<LIST>] 
 oci export <OCI_ID> --to <TARGETS> [--format json|plain|pretty] [--verify]
 oci convert <INPUT> --from <SPACE> --to <TARGETS> [--format json|plain|pretty] [--verify]
 oci serve [--host <HOST>] [--port <PORT>] [--config <PATH>] [--json]
+oci swatch gen (--id <OCI_ID>|--family <INDEX_OR_CODE>|--range <START>..<END>) --out <DIR> [--template <SVG_PATH>] [--filename short|full] [--overwrite]
+oci swatch data --id <OCI_ID>
 oci registry <SUBCOMMAND>
 oci test <SUBCOMMAND>
 oci validate <TARGET> [--type id|registry|color]
 oci config [--path <TOML_PATH>]
 ```
+
+## Swatch Cards
+
+`oci swatch gen` renders SVG swatch cards from `Color_Cards_OCI_v1.svg`.
+`oci swatch data --id <OCI_ID>` prints the placeholder data JSON for template
+authors. For full placeholder and range documentation, see
+[`../docs/swatch-templates.md`](../docs/swatch-templates.md).
 
 ## Local Kernel API
 

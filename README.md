@@ -200,9 +200,14 @@ Basic commands:
 oci encode "#E85A9A" --space hex
 oci inspect OCI-1-48RS-327
 oci export OCI-1-48RS-327 --to hex,oklch,css
+oci swatch gen --id OCI-1-22TL-326 --template Color_Cards_OCI_v1.svg --out out/
 oci serve
 oci config
 ```
+
+SVG swatch-card generation is available through `oci swatch gen` and
+`oci swatch data`. See [docs/swatch-templates.md](docs/swatch-templates.md) for
+template placeholders, selector syntax, and output rules.
 
 ## Local Kernel API
 

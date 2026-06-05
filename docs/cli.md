@@ -6,7 +6,7 @@ The CLI uses a small internal parser. Arguments are positional plus long flags.
 Known flags that take values are:
 
 ```text
---space --format --precision --exports --to --from --type --path --config --host --port
+--space --format --precision --exports --to --from --type --path --config --host --port --id --family --range --out --template --filename
 ```
 
 Default output comes from configuration. Built-in defaults use `pretty`. JSON is
@@ -20,6 +20,8 @@ oci inspect <OCI_ID> [--format json|pretty|plain] [--exports all|none|summary|<L
 oci export <OCI_ID> [--to <TARGETS>] [--format json|plain|pretty] [--verify] [--path <TOML_PATH>]
 oci convert <INPUT> [--from <SPACE>] [--to <TARGETS>] [--format json|plain|pretty] [--precision <N>] [--verify] [--path <TOML_PATH>]
 oci serve [--host <HOST>] [--port <PORT>] [--config <TOML_PATH>] [--json]
+oci swatch gen (--id <OCI_ID>|--family <INDEX_OR_CODE>|--range <START>..<END>) --out <DIR> [--template <SVG_PATH>] [--filename short|full] [--overwrite]
+oci swatch data --id <OCI_ID>
 oci registry <SUBCOMMAND> [--path <TOML_PATH>]
 oci test <SUBCOMMAND> [--path <TOML_PATH>]
 oci validate <TARGET> [--type id|registry|color] [--space <SPACE>] [--path <TOML_PATH>]

@@ -27,6 +27,8 @@ This `docs/` directory is the documentation root for the repository.
   examples, and important result structures.
 - [Local Kernel API](local-api.md): localhost HTTP JSON API endpoints, request
   and response envelopes, errors, and security notes.
+- [SVG Swatch Templates](swatch-templates.md): `oci swatch gen`, `oci swatch
+  data`, template placeholders, and output rules.
 - [Limitations](limitations.md): what v1-beta intentionally does not implement.
 
 ## Current Implementation Scope
@@ -52,6 +54,7 @@ cargo run -p oci-cli -- encode "#E85A9A" --space hex
 cargo run -p oci-cli -- encode "#E85A9A" --space hex --format json
 cargo run -p oci-cli -- inspect OCI-1-48RS-327
 cargo run -p oci-cli -- registry info
+cargo run -p oci-cli -- swatch gen --id OCI-1-22TL-326 --template cli/Color_Cards_OCI_v1.svg --out out/
 cargo run -p oci-cli -- serve
 cargo run -p oci-cli -- config
 ```

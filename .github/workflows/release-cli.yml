@@ -152,9 +152,18 @@ jobs:
           WORKFLOW_RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           RELEASE_DATE="$(date -u +%Y-%m-%d)"
           GENERATED_NOTES="$(mktemp)"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="${TAG_NAME}" \
-            --jq '.body' > "${GENERATED_NOTES}"
+          PREVIOUS_TAG="$(git tag --list 'cli-v*' --sort=-v:refname | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
+
+          if [ -n "${PREVIOUS_TAG}" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${TAG_NAME}" \
+              -f previous_tag_name="${PREVIOUS_TAG}" \
+              --jq '.body' > "${GENERATED_NOTES}"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${TAG_NAME}" \
+              --jq '.body' > "${GENERATED_NOTES}"
+          fi
 
           {
           cat <<EOF

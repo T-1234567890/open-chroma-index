@@ -2,10 +2,13 @@ use crate::config::{CliConfig, all_export_targets, config_path_from_args};
 use crate::output;
 use oci_core::{
     ColorExport, ColorInput, EncodeResult, EncodedSrgb, ExportSet, FloatRgb, Hsl, InspectResult,
-    OciId, Oklab, Oklch, Registry, Rgb8, SupportStatus, build_support_matrix, decode_oci_id,
-    encode, encode_from_hex, export_all, inspect,
+    OciId, Oklab, Oklch, Registry, RegistryStep, Rgb8, SupportStatus, build_support_matrix,
+    decode_oci_id, encode, encode_from_hex, export_all, inspect,
 };
+use std::collections::BTreeMap;
+use std::fs;
 use std::io::{self, IsTerminal, Write};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliError {
@@ -55,6 +58,7 @@ pub(crate) fn run_cli_with_config(args: &[String], config: &CliConfig) -> Result
         "export" => cmd_export(&args[1..], config),
         "convert" => cmd_convert(&args[1..], config),
         "serve" => cmd_serve(&args[1..], config),
+        "swatch" => cmd_swatch(&args[1..], config),
         "registry" => cmd_registry(&args[1..], config),
         "test" => cmd_test(&args[1..], config),
         "validate" => cmd_validate(&args[1..], config),
@@ -79,6 +83,8 @@ fn help_text() -> String {
         "  oci export <OCI_ID> --to <TARGETS> [--format json|plain|pretty] [--verify]",
         "  oci convert <INPUT> --from <SPACE> --to <TARGETS> [--format json|plain|pretty] [--verify]",
         "  oci serve [--host <HOST>] [--port <PORT>] [--config <PATH>] [--json]",
+        "  oci swatch gen (--id <OCI_ID>|--family <INDEX_OR_CODE>|--range <START>..<END>) --out <DIR> [--template <SVG_PATH>] [--filename short|full] [--overwrite]",
+        "  oci swatch data --id <OCI_ID>",
         "  oci registry <SUBCOMMAND>",
         "  oci test <SUBCOMMAND>",
         "  oci validate <TARGET> [--type id|registry|color]",
@@ -88,6 +94,7 @@ fn help_text() -> String {
         "  oci encode \"#E85A9A\" --space hex",
         "  oci inspect OCI-1-48RS-327",
         "  oci serve",
+        "  oci swatch gen --id OCI-1-22TL-326 --out out/",
         "  oci registry validate",
     ]
     .join("\n")
@@ -217,6 +224,430 @@ fn cmd_serve(args: &[String], config: &CliConfig) -> Result<String, CliError> {
     let options = crate::server::ServerOptions::from_args(args, config)?;
     crate::server::serve(options, config.clone())?;
     Ok(String::new())
+}
+
+fn cmd_swatch(args: &[String], config: &CliConfig) -> Result<String, CliError> {
+    let Some(subcommand) = args.first().map(String::as_str) else {
+        return Err(CliError::new("parse_error", "missing swatch subcommand"));
+    };
+    let registry = load_registry(config)?;
+
+    match subcommand {
+        "gen" => cmd_swatch_gen(&args[1..], &registry),
+        "data" => cmd_swatch_data(&args[1..], &registry),
+        other => Err(CliError::new(
+            "parse_error",
+            format!("unknown swatch subcommand: {other}"),
+        )),
+    }
+}
+
+fn cmd_swatch_gen(args: &[String], registry: &Registry) -> Result<String, CliError> {
+    let out_dir = flag_value(args, "--out")
+        .ok_or_else(|| CliError::new("parse_error", "missing --out <DIR>"))?;
+    let filename_mode = flag_value(args, "--filename").unwrap_or("short");
+    if !matches!(filename_mode, "short" | "full") {
+        return Err(CliError::new(
+            "parse_error",
+            format!("unsupported filename mode: {filename_mode}"),
+        ));
+    }
+    let overwrite = has_flag(args, "--overwrite");
+    let template_path = resolve_swatch_template(flag_value(args, "--template"))?;
+    let template = fs::read_to_string(&template_path).map_err(|error| {
+        CliError::new(
+            "template_error",
+            format!(
+                "failed to read template {}: {error}",
+                template_path.display()
+            ),
+        )
+    })?;
+    let out_dir = PathBuf::from(out_dir);
+    let selection = swatch_selection(args, registry)?;
+    let records = swatch_records_for_selection(&selection, registry)?;
+    let mut generated_paths = Vec::with_capacity(records.len());
+
+    for record in &records {
+        let target_dir = match &selection {
+            SwatchSelection::Family(_) => out_dir.join(record.family_id.clone()),
+            _ => out_dir.clone(),
+        };
+        fs::create_dir_all(&target_dir).map_err(|error| {
+            CliError::new(
+                "output_error",
+                format!(
+                    "failed to create output directory {}: {error}",
+                    target_dir.display()
+                ),
+            )
+        })?;
+        let file_id = if filename_mode == "full" {
+            record.base_full.clone()
+        } else {
+            record.base_short.clone()
+        };
+        let target = target_dir.join(format!("{file_id}.svg"));
+        if target.exists() && !overwrite {
+            return Err(CliError::new(
+                "output_exists",
+                format!(
+                    "output file already exists: {} (pass --overwrite to replace it)",
+                    target.display()
+                ),
+            ));
+        }
+        let rendered = render_swatch_template(&template, &record.placeholders);
+        fs::write(&target, rendered).map_err(|error| {
+            CliError::new(
+                "output_error",
+                format!("failed to write {}: {error}", target.display()),
+            )
+        })?;
+        generated_paths.push(target);
+    }
+
+    let first_file = generated_paths
+        .first()
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+    let last_file = generated_paths
+        .last()
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+    Ok(format!(
+        "{{\"generated\":{},\"out\":{},\"template\":{},\"firstFile\":{},\"lastFile\":{}}}",
+        records.len(),
+        json_string(&out_dir.display().to_string()),
+        json_string(&template_path.display().to_string()),
+        json_string(&first_file),
+        json_string(&last_file)
+    ))
+}
+
+fn cmd_swatch_data(args: &[String], registry: &Registry) -> Result<String, CliError> {
+    let id = flag_value(args, "--id")
+        .ok_or_else(|| CliError::new("parse_error", "missing --id <OCI_ID>"))?;
+    let record = swatch_record_for_id(id, registry)?;
+    Ok(swatch_placeholder_json(&record.placeholders))
+}
+
+#[derive(Debug, Clone)]
+enum SwatchSelection {
+    Id(String),
+    Family(String),
+    Range { start: OciId, end: OciId },
+}
+
+#[derive(Debug, Clone)]
+struct SwatchRecord {
+    family_id: String,
+    base_short: String,
+    base_full: String,
+    placeholders: BTreeMap<String, String>,
+}
+
+fn swatch_selection(args: &[String], registry: &Registry) -> Result<SwatchSelection, CliError> {
+    let mut selectors = Vec::new();
+    if let Some(id) = flag_value(args, "--id") {
+        selectors.push(("id", id));
+    }
+    if let Some(family) = flag_value(args, "--family") {
+        selectors.push(("family", family));
+    }
+    if let Some(range) = flag_value(args, "--range") {
+        selectors.push(("range", range));
+    }
+
+    match selectors.as_slice() {
+        [] => Err(CliError::new(
+            "parse_error",
+            "one selector is required: --id, --family, or --range",
+        )),
+        [("id", id)] => Ok(SwatchSelection::Id((*id).to_string())),
+        [("family", family)] => {
+            let family = find_family(registry, family)?;
+            Ok(SwatchSelection::Family(family.id.to_string()))
+        }
+        [("range", range)] => {
+            let (start, end) = parse_swatch_range(range, registry)?;
+            Ok(SwatchSelection::Range { start, end })
+        }
+        _ => Err(CliError::new(
+            "parse_error",
+            "only one selector may be provided: --id, --family, or --range",
+        )),
+    }
+}
+
+fn swatch_records_for_selection(
+    selection: &SwatchSelection,
+    registry: &Registry,
+) -> Result<Vec<SwatchRecord>, CliError> {
+    match selection {
+        SwatchSelection::Id(id) => Ok(vec![swatch_record_for_id(id, registry)?]),
+        SwatchSelection::Family(family_id) => {
+            let family = find_family(registry, family_id)?;
+            let mut steps = registry
+                .steps()
+                .iter()
+                .filter(|step| step.family_id == family.id)
+                .collect::<Vec<_>>();
+            steps.sort_by_key(|step| step.step_number);
+            steps
+                .into_iter()
+                .map(|step| swatch_record_for_step(step, registry))
+                .collect()
+        }
+        SwatchSelection::Range { start, end } => {
+            if start.family != end.family {
+                return Err(CliError::new(
+                    "invalid_range",
+                    "range must stay within one family; cross-family ranges are not supported",
+                ));
+            }
+            let start_number = start.step.step_number();
+            let end_number = end.step.step_number();
+            if start_number > end_number {
+                return Err(CliError::new(
+                    "invalid_range",
+                    format!("range start {start_number:03} is greater than end {end_number:03}"),
+                ));
+            }
+            (start_number..=end_number)
+                .map(|step_number| {
+                    let step = oci_core::StepId::from_step_number(step_number).map_err(id_error)?;
+                    let id = OciId::new(start.family, step, None);
+                    swatch_record_for_oci_id(&id, registry)
+                })
+                .collect()
+        }
+    }
+}
+
+fn swatch_record_for_step(
+    step: &RegistryStep,
+    registry: &Registry,
+) -> Result<SwatchRecord, CliError> {
+    let id = OciId::new(step.family_id, step.step, None);
+    swatch_record_for_oci_id(&id, registry)
+}
+
+fn swatch_record_for_id(id: &str, registry: &Registry) -> Result<SwatchRecord, CliError> {
+    let id = OciId::parse_with_registry(id, registry).map_err(id_error)?;
+    swatch_record_for_oci_id(&id, registry)
+}
+
+fn swatch_record_for_oci_id(id: &OciId, registry: &Registry) -> Result<SwatchRecord, CliError> {
+    let result = inspect(id, registry).map_err(pipeline_error)?;
+    let family = registry
+        .find_family(id.family)
+        .ok_or_else(|| CliError::new("invalid_family", format!("unknown family: {}", id.family)))?;
+    let mut base_id = id.clone();
+    base_id.offset = None;
+    let base_short = base_id.to_short_string();
+    let base_full = base_id.to_full_string();
+    let mut placeholders = BTreeMap::new();
+    let exports = &result.exports;
+    let clipped_srgb = clipped_srgb(exports.oklch);
+    let color_hex = oci_core::export::srgb_to_hex(clipped_srgb);
+
+    placeholders.insert("OCI_SHORT".to_string(), result.short_id.clone());
+    placeholders.insert("OCI_FULL".to_string(), result.full_id.clone());
+    placeholders.insert("FAMILY_INDEX".to_string(), id.family.index.to_string());
+    placeholders.insert("FAMILY_CODE".to_string(), id.family.to_string());
+    placeholders.insert("FAMILY_NAME".to_string(), family.name.clone());
+    placeholders.insert("STEP_NUMBER".to_string(), id.step.step_number().to_string());
+    placeholders.insert("ANCHOR".to_string(), id.step.anchor.to_string());
+    placeholders.insert(
+        "LIGHTNESS_LEVEL".to_string(),
+        format!("{:02}", id.step.lightness),
+    );
+    placeholders.insert("CHROMA_LEVEL".to_string(), format!("{:02}", id.step.chroma));
+    placeholders.insert("HEX".to_string(), string_export_display(&exports.hex));
+    placeholders.insert("RGB".to_string(), rgb8_export_display(&exports.rgb));
+    placeholders.insert("HSL".to_string(), hsl_export_display(&exports.hsl));
+    placeholders.insert(
+        "SRGB".to_string(),
+        float_rgb_export_display(&exports.srgb_float),
+    );
+    placeholders.insert(
+        "DISPLAY_P3".to_string(),
+        float_rgb_export_display(&exports.display_p3_float),
+    );
+    placeholders.insert(
+        "ADOBE_RGB".to_string(),
+        float_rgb_export_display(&exports.adobe_rgb_1998_float),
+    );
+    placeholders.insert(
+        "REC709".to_string(),
+        float_rgb_export_display(&exports.rec709_float),
+    );
+    placeholders.insert("OKLCH".to_string(), oklch_css_components(exports.oklch));
+    placeholders.insert("OKLAB".to_string(), oklab_swatch_value(exports.oklab));
+    placeholders.insert("COLOR_HEX".to_string(), color_hex);
+    placeholders.insert("COLOR_CSS".to_string(), exports.css.oklch.clone());
+    placeholders.insert("VERSION".to_string(), id.version.to_string());
+
+    Ok(SwatchRecord {
+        family_id: id.family.to_string(),
+        base_short,
+        base_full,
+        placeholders,
+    })
+}
+
+fn render_swatch_template(template: &str, placeholders: &BTreeMap<String, String>) -> String {
+    let mut rendered = template.to_string();
+    for (key, value) in placeholders {
+        rendered = rendered.replace(&format!("{{{{{key}}}}}"), &escape_xml(value));
+    }
+    rendered
+}
+
+fn swatch_placeholder_json(placeholders: &BTreeMap<String, String>) -> String {
+    let fields = placeholders
+        .iter()
+        .map(|(key, value)| format!("{}:{}", json_string(key), json_string(value)))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{fields}}}")
+}
+
+fn resolve_swatch_template(explicit: Option<&str>) -> Result<PathBuf, CliError> {
+    if let Some(path) = explicit {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Ok(path);
+        }
+        return Err(CliError::new(
+            "template_error",
+            format!("template file not found: {}", path.display()),
+        ));
+    }
+
+    for candidate in [
+        PathBuf::from("Color_Cards_OCI_v1.svg"),
+        PathBuf::from("templates").join("Color_Cards_OCI_v1.svg"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Color_Cards_OCI_v1.svg"),
+    ] {
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(CliError::new(
+        "template_error",
+        "missing SVG template. Pass --template <SVG_PATH> or place Color_Cards_OCI_v1.svg in the current directory or templates/",
+    ))
+}
+
+fn parse_swatch_range(value: &str, registry: &Registry) -> Result<(OciId, OciId), CliError> {
+    let Some((start, end)) = value.split_once("..") else {
+        return Err(CliError::new(
+            "invalid_range",
+            "range must use START..END syntax",
+        ));
+    };
+    if start.is_empty() || end.is_empty() {
+        return Err(CliError::new(
+            "invalid_range",
+            "range start and end must not be empty",
+        ));
+    }
+    let start = parse_swatch_range_endpoint(start, registry)?;
+    let end = parse_swatch_range_endpoint(end, registry)?;
+    if start.family != end.family {
+        return Err(CliError::new(
+            "invalid_range",
+            "range start and end must be in the same family",
+        ));
+    }
+    if start.step.step_number() > end.step.step_number() {
+        return Err(CliError::new(
+            "invalid_range",
+            "range start must be less than or equal to range end",
+        ));
+    }
+    Ok((start, end))
+}
+
+fn parse_swatch_range_endpoint(value: &str, registry: &Registry) -> Result<OciId, CliError> {
+    if value.starts_with("OCI-") {
+        return OciId::parse_with_registry(value, registry).map_err(id_error);
+    }
+    let Some((family, step)) = value.split_once('-') else {
+        return Err(CliError::new(
+            "invalid_range",
+            format!("invalid compact range endpoint: {value}"),
+        ));
+    };
+    OciId::parse_with_registry(&format!("OCI-1-{family}-{step}"), registry).map_err(id_error)
+}
+
+fn find_family<'a>(registry: &'a Registry, key: &str) -> Result<&'a oci_core::Family, CliError> {
+    registry
+        .families()
+        .iter()
+        .find(|family| {
+            family.id.to_string() == key
+                || family.id.code.to_string() == key
+                || family.id.index.to_string() == key
+        })
+        .ok_or_else(|| CliError::new("invalid_family", format!("unknown family: {key}")))
+}
+
+fn string_export_display(export: &ColorExport<String>) -> String {
+    export
+        .value
+        .clone()
+        .unwrap_or_else(|| "Unavailable".to_string())
+}
+
+fn float_rgb_export_display(export: &ColorExport<FloatRgb>) -> String {
+    export.value.map_or_else(
+        || "Unavailable".to_string(),
+        |rgb| format!("r={:.6} g={:.6} b={:.6}", rgb.r, rgb.g, rgb.b),
+    )
+}
+
+fn rgb8_export_display(export: &ColorExport<Rgb8>) -> String {
+    export.value.map_or_else(
+        || "Unavailable".to_string(),
+        |rgb| format!("r={} g={} b={}", rgb.r, rgb.g, rgb.b),
+    )
+}
+
+fn hsl_export_display(export: &ColorExport<Hsl>) -> String {
+    export.value.map_or_else(
+        || "Unavailable".to_string(),
+        |hsl| format!("h={:.6} s={:.6} l={:.6}", hsl.h, hsl.s, hsl.l),
+    )
+}
+
+fn clipped_srgb(color: Oklch) -> EncodedSrgb {
+    let srgb = color.to_encoded_srgb();
+    EncodedSrgb::new(
+        srgb.r.clamp(0.0, 1.0),
+        srgb.g.clamp(0.0, 1.0),
+        srgb.b.clamp(0.0, 1.0),
+    )
+}
+
+fn oklch_css_components(color: Oklch) -> String {
+    format!("{:.6}% {:.6} {:.6}deg", color.l * 100.0, color.c, color.h)
+}
+
+fn oklab_swatch_value(color: Oklab) -> String {
+    format!("L={:.6} a={:.6} b={:.6}", color.l, color.a, color.b)
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn cmd_registry(args: &[String], config: &CliConfig) -> Result<String, CliError> {
@@ -1252,6 +1683,12 @@ fn flag_takes_value(flag: &str) -> bool {
             | "--config"
             | "--host"
             | "--port"
+            | "--id"
+            | "--family"
+            | "--range"
+            | "--out"
+            | "--template"
+            | "--filename"
     )
 }
 
@@ -1339,6 +1776,28 @@ mod tests {
 
     fn temp_config_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("oci-{name}-{}.toml", std::process::id()))
+    }
+
+    fn temp_swatch_dir(name: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("oci-swatch-{name}-{}-{unique}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn write_test_template(dir: &std::path::Path) -> PathBuf {
+        let path = dir.join("template.svg");
+        fs::write(
+            &path,
+            r#"<svg><rect id="COLOR_BLOCK" fill="oklch({{OKLCH}})"/><text>{{OCI_SHORT}}</text><text>{{COLOR_HEX}}</text><text>{{FAMILY_NAME}}&#9;{{FAMILY_CODE}}</text></svg>"#,
+        )
+        .unwrap();
+        path
     }
 
     fn assert_all_supported_exports_are_visible(out: &str) {
@@ -1653,6 +2112,194 @@ mod tests {
         let out = run_cli(&args(&["registry", "checksum"])).unwrap();
         assert!(out.contains("\"algorithm\":\"sha256\""));
         assert!(out.contains("\"valid\":true"));
+    }
+
+    #[test]
+    fn swatch_gen_id_creates_svg_and_replaces_placeholders() {
+        let dir = temp_swatch_dir("single");
+        let template = write_test_template(&dir);
+        let out_dir = dir.join("out");
+
+        let out = run_cli(&args(&[
+            "swatch",
+            "gen",
+            "--id",
+            "OCI-1-22TL-326",
+            "--template",
+            template.to_str().unwrap(),
+            "--out",
+            out_dir.to_str().unwrap(),
+        ]))
+        .unwrap();
+
+        assert!(out.contains("\"generated\":1"));
+        assert!(out.contains("\"firstFile\""));
+        let svg_path = out_dir.join("OCI-1-22TL-326.svg");
+        let svg = fs::read_to_string(svg_path).unwrap();
+        assert!(svg.contains("OCI-1-22TL-326"));
+        assert!(!svg.contains("{{OCI_SHORT}}"));
+        assert!(!svg.contains("{{OKLCH}}"));
+        assert!(!svg.contains("{{COLOR_HEX}}"));
+        assert!(svg.contains("fill=\"oklch("));
+        assert!(svg.contains("deg)\""));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn swatch_gen_family_creates_360_svgs_in_family_directory() {
+        let dir = temp_swatch_dir("family");
+        let template = write_test_template(&dir);
+        let out_dir = dir.join("out");
+
+        run_cli(&args(&[
+            "swatch",
+            "gen",
+            "--family",
+            "22TL",
+            "--template",
+            template.to_str().unwrap(),
+            "--out",
+            out_dir.to_str().unwrap(),
+        ]))
+        .unwrap();
+
+        let family_dir = out_dir.join("22TL");
+        let count = fs::read_dir(&family_dir).unwrap().count();
+        assert_eq!(count, 360);
+        assert!(family_dir.join("OCI-1-22TL-001.svg").exists());
+        assert!(family_dir.join("OCI-1-22TL-360.svg").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn swatch_gen_range_creates_inclusive_svg_set() {
+        let dir = temp_swatch_dir("range");
+        let template = write_test_template(&dir);
+        let out_dir = dir.join("out");
+
+        run_cli(&args(&[
+            "swatch",
+            "gen",
+            "--range",
+            "OCI-1-22TL-001..OCI-1-22TL-003",
+            "--template",
+            template.to_str().unwrap(),
+            "--out",
+            out_dir.to_str().unwrap(),
+        ]))
+        .unwrap();
+
+        assert_eq!(fs::read_dir(&out_dir).unwrap().count(), 3);
+        assert!(out_dir.join("OCI-1-22TL-001.svg").exists());
+        assert!(out_dir.join("OCI-1-22TL-003.svg").exists());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn swatch_gen_compact_range_syntax_works() {
+        let dir = temp_swatch_dir("compact-range");
+        let template = write_test_template(&dir);
+        let out_dir = dir.join("out");
+
+        run_cli(&args(&[
+            "swatch",
+            "gen",
+            "--range",
+            "22TL-001..22TL-003",
+            "--template",
+            template.to_str().unwrap(),
+            "--out",
+            out_dir.to_str().unwrap(),
+        ]))
+        .unwrap();
+
+        assert_eq!(fs::read_dir(&out_dir).unwrap().count(), 3);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn swatch_gen_missing_template_returns_clear_error() {
+        let dir = temp_swatch_dir("missing-template");
+        let error = run_cli(&args(&[
+            "swatch",
+            "gen",
+            "--id",
+            "OCI-1-22TL-326",
+            "--template",
+            dir.join("missing.svg").to_str().unwrap(),
+            "--out",
+            dir.join("out").to_str().unwrap(),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.code, "template_error");
+        assert!(error.message.contains("template file not found"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn swatch_gen_existing_output_requires_overwrite() {
+        let dir = temp_swatch_dir("overwrite");
+        let template = write_test_template(&dir);
+        let out_dir = dir.join("out");
+        let base_args = [
+            "swatch",
+            "gen",
+            "--id",
+            "OCI-1-22TL-326",
+            "--template",
+            template.to_str().unwrap(),
+            "--out",
+            out_dir.to_str().unwrap(),
+        ];
+
+        run_cli(&args(&base_args)).unwrap();
+        let error = run_cli(&args(&base_args)).unwrap_err();
+        assert_eq!(error.code, "output_exists");
+
+        let mut overwrite_args = base_args.to_vec();
+        overwrite_args.push("--overwrite");
+        run_cli(&args(&overwrite_args)).unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn swatch_gen_rejects_invalid_selector_combinations() {
+        let dir = temp_swatch_dir("selector-combo");
+        let template = write_test_template(&dir);
+        let error = run_cli(&args(&[
+            "swatch",
+            "gen",
+            "--id",
+            "OCI-1-22TL-326",
+            "--family",
+            "22TL",
+            "--template",
+            template.to_str().unwrap(),
+            "--out",
+            dir.join("out").to_str().unwrap(),
+        ]))
+        .unwrap_err();
+        assert_eq!(error.code, "parse_error");
+        assert!(error.message.contains("only one selector"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn swatch_data_id_returns_placeholder_json() {
+        let out = run_cli(&args(&["swatch", "data", "--id", "OCI-1-22TL-326"])).unwrap();
+        assert!(out.starts_with('{'));
+        assert!(out.contains("\"OCI_SHORT\":\"OCI-1-22TL-326\""));
+        assert!(out.contains("\"OKLCH\""));
+        assert!(out.contains("\"COLOR_HEX\":\"#"));
+        assert!(out.contains("\"FAMILY_CODE\":\"22TL\""));
+        assert!(out.contains("\"HEX\":\"Unavailable\""));
     }
 
     #[test]
