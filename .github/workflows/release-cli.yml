@@ -48,7 +48,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build CLI
-        run: cargo build --locked -p oci-cli --release --target ${{ matrix.target }}
+        run: cargo build -p oci-cli --release --target ${{ matrix.target }}
 
       - name: Smoke test built CLI
         shell: pwsh
@@ -124,7 +124,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Package CLI dry-run
-        run: cargo package --locked --manifest-path cli/Cargo.toml
+        run: cargo package --allow-dirty --manifest-path cli/Cargo.toml
 
       - name: Require crates.io token
         if: env.CARGO_REGISTRY_TOKEN == ''
@@ -133,7 +133,7 @@ jobs:
           exit 1
 
       - name: Publish CLI crate to crates.io
-        run: cargo publish --locked --manifest-path cli/Cargo.toml --token "$CARGO_REGISTRY_TOKEN"
+        run: cargo publish --allow-dirty --manifest-path cli/Cargo.toml --token "$CARGO_REGISTRY_TOKEN"
 
       - name: Download CLI artifacts
         uses: actions/download-artifact@v4

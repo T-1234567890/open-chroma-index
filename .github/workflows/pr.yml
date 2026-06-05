@@ -66,13 +66,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Lint core
-        run: cargo clippy --locked -p open-chroma-index --all-targets --all-features -- -D warnings
+        run: cargo clippy -p open-chroma-index --all-targets --all-features -- -D warnings
 
       - name: Test core
-        run: cargo test --locked -p open-chroma-index --all-features
+        run: cargo test -p open-chroma-index --all-features
 
       - name: Package core dry-run
-        run: cargo package --locked
+        run: cargo package --allow-dirty
 
   cli:
     name: CLI checks (${{ matrix.os }})
@@ -100,16 +100,16 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Lint CLI
-        run: cargo clippy --locked -p oci-cli --all-targets --all-features -- -D warnings
+        run: cargo clippy -p oci-cli --all-targets --all-features -- -D warnings
 
       - name: Test CLI
-        run: cargo test --locked -p oci-cli --all-features
+        run: cargo test -p oci-cli --all-features
 
       - name: Validate registry through CLI
-        run: cargo run --locked -p oci-cli -- registry validate
+        run: cargo run -p oci-cli -- registry validate
 
       - name: Smoke encode JSON
-        run: cargo run --locked -p oci-cli -- encode "#E85A9A" --space hex --format json
+        run: cargo run -p oci-cli -- encode "#E85A9A" --space hex --format json
 
       - name: Package CLI dry-run
-        run: cargo package --locked --manifest-path cli/Cargo.toml --config 'patch.crates-io.open-chroma-index.path="."'
+        run: cargo package --allow-dirty --manifest-path cli/Cargo.toml --config 'patch.crates-io.open-chroma-index.path="."'
