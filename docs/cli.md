@@ -165,8 +165,11 @@ oci inspect OCI-1-48RS-327@L-0.030857,C-0.010032,H+0.641361 --exports hex,oklch,
 
 Plain output returns the canonical short OCI ID.
 
-`--verify` includes detailed per-target status and round-trip error lines in
-pretty output.
+The compact verification block includes `max round-trip error` and
+`ΔE CIEDE2000`. The max round-trip error is the internal OKLab Euclidean
+distance; `ΔE CIEDE2000` is computed in CIELAB D65 for human-facing color
+difference. `--verify` includes detailed per-target status and round-trip error
+lines in pretty output.
 
 ## `oci export`
 
@@ -186,8 +189,9 @@ oci export OCI-1-46PK-236 --to cmyk --format json
 If `--to` is omitted, the command uses `output.default_exports` from config.
 The built-in default includes every supported CLI export target.
 
-Pretty output includes selected export values plus a compact verification block.
-`--verify` adds detailed verification lines.
+Pretty output includes selected export values plus a compact verification block
+with `max round-trip error` and `ΔE CIEDE2000`. `--verify` adds detailed
+verification lines.
 
 ## `oci convert`
 

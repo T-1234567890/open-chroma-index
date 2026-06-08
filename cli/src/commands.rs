@@ -15,6 +15,12 @@ const UPDATE_RELEASES_URL: &str =
     "https://api.github.com/repos/T-1234567890/open-chroma-index/releases?per_page=20";
 const INSTALL_SCRIPT_URL: &str =
     "https://raw.githubusercontent.com/T-1234567890/open-chroma-index/main/install.sh";
+const CLI_MANIFEST: &str = include_str!("../Cargo.toml");
+const D65_WHITE_X: f64 = 0.950_47;
+const D65_WHITE_Y: f64 = 1.0;
+const D65_WHITE_Z: f64 = 1.088_83;
+const CIELAB_EPSILON: f64 = 216.0 / 24_389.0;
+const CIELAB_KAPPA: f64 = 24_389.0 / 27.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliError {
@@ -42,7 +48,7 @@ pub fn run_cli(args: &[String]) -> Result<String, CliError> {
 
     if matches!(command, "--version" | "-V" | "version") {
         if args.iter().any(|arg| arg == "--core") {
-            return Ok(format!("oci-core {}", oci_core::CORE_VERSION));
+            return Ok(format!("oci-core {}", linked_core_version()));
         }
         return Ok(format!("oci {}", env!("CARGO_PKG_VERSION")));
     }
@@ -1254,6 +1260,7 @@ struct PrettyVerification {
     label: &'static str,
     status: SupportStatus,
     round_trip_error: Option<f64>,
+    delta_e_ciede2000: Option<f64>,
 }
 
 fn verification_pretty(exports: &ExportSet, targets: &[String], detailed: bool) -> String {
@@ -1294,6 +1301,16 @@ fn verification_pretty(exports: &ExportSet, targets: &[String], detailed: bool) 
         "  max round-trip error: {}",
         max_error.map_or_else(|| "none".to_string(), |value| format!("{value:.12}"))
     ));
+    let max_delta_e = entries
+        .iter()
+        .filter_map(|entry| entry.delta_e_ciede2000)
+        .fold(None, |max: Option<f64>, value| {
+            Some(max.map_or(value, |current| current.max(value)))
+        });
+    lines.push(format!(
+        "  ΔE CIEDE2000: {}",
+        max_delta_e.map_or_else(|| "none".to_string(), |value| format!("{value:.12}"))
+    ));
 
     if detailed {
         lines.push(String::new());
@@ -1316,60 +1333,241 @@ fn verification_pretty(exports: &ExportSet, targets: &[String], detailed: bool) 
 }
 
 fn verification_entries(exports: &ExportSet, targets: &[String]) -> Vec<PrettyVerification> {
+    let source = exports.oklch;
     targets
         .iter()
         .filter_map(|target| match target.as_str() {
-            "hex" => Some(export_verification("HEX", &exports.hex)),
-            "rgb" => Some(export_verification("RGB", &exports.rgb)),
-            "hsl" => Some(export_verification("HSL", &exports.hsl)),
-            "srgb" => Some(export_verification("sRGB", &exports.srgb_float)),
-            "display-p3" => Some(export_verification("Display P3", &exports.display_p3_float)),
+            "hex" => Some(export_verification(
+                "HEX",
+                &exports.hex,
+                exports
+                    .hex
+                    .value
+                    .as_deref()
+                    .and_then(|hex| EncodedSrgb::from_hex(hex).ok())
+                    .map(EncodedSrgb::to_oklch)
+                    .and_then(|round_trip| delta_e_ciede2000(source, round_trip)),
+            )),
+            "rgb" => Some(export_verification(
+                "RGB",
+                &exports.rgb,
+                exports
+                    .rgb
+                    .value
+                    .and_then(|rgb| EncodedSrgb::from_rgb_u8(rgb.r, rgb.g, rgb.b).ok())
+                    .map(EncodedSrgb::to_oklch)
+                    .and_then(|round_trip| delta_e_ciede2000(source, round_trip)),
+            )),
+            "hsl" => Some(export_verification(
+                "HSL",
+                &exports.hsl,
+                exports
+                    .hsl
+                    .value
+                    .and_then(|hsl| EncodedSrgb::from_hsl(hsl.h, hsl.s, hsl.l).ok())
+                    .map(EncodedSrgb::to_oklch)
+                    .and_then(|round_trip| delta_e_ciede2000(source, round_trip)),
+            )),
+            "srgb" => Some(export_verification(
+                "sRGB",
+                &exports.srgb_float,
+                exports
+                    .srgb_float
+                    .value
+                    .map(|rgb| EncodedSrgb::new(rgb.r, rgb.g, rgb.b).to_oklch())
+                    .and_then(|round_trip| delta_e_ciede2000(source, round_trip)),
+            )),
+            "display-p3" => Some(export_verification(
+                "Display P3",
+                &exports.display_p3_float,
+                exports
+                    .display_p3_float
+                    .value
+                    .map(|rgb| oci_core::EncodedDisplayP3::new(rgb.r, rgb.g, rgb.b).to_oklch())
+                    .and_then(|round_trip| delta_e_ciede2000(source, round_trip)),
+            )),
             "adobe-rgb" => Some(export_verification(
                 "Adobe RGB",
                 &exports.adobe_rgb_1998_float,
+                exports
+                    .adobe_rgb_1998_float
+                    .value
+                    .map(|rgb| oci_core::EncodedAdobeRgb1998::new(rgb.r, rgb.g, rgb.b).to_oklch())
+                    .and_then(|round_trip| delta_e_ciede2000(source, round_trip)),
             )),
-            "rec709" => Some(export_verification("Rec.709", &exports.rec709_float)),
+            "rec709" => Some(export_verification(
+                "Rec.709",
+                &exports.rec709_float,
+                exports
+                    .rec709_float
+                    .value
+                    .map(|rgb| oci_core::EncodedRec709::new(rgb.r, rgb.g, rgb.b).to_oklch())
+                    .and_then(|round_trip| delta_e_ciede2000(source, round_trip)),
+            )),
             "oklch" => Some(PrettyVerification {
                 label: "OKLCH",
                 status: SupportStatus::Supported,
                 round_trip_error: Some(0.0),
+                delta_e_ciede2000: Some(0.0),
             }),
             "oklab" => Some(PrettyVerification {
                 label: "OKLab",
                 status: SupportStatus::Supported,
                 round_trip_error: Some(0.0),
+                delta_e_ciede2000: Some(0.0),
             }),
             "css" => Some(PrettyVerification {
                 label: "CSS",
                 status: SupportStatus::Supported,
                 round_trip_error: None,
+                delta_e_ciede2000: None,
             }),
             "json-token" => Some(PrettyVerification {
                 label: "JSON token",
                 status: SupportStatus::Supported,
                 round_trip_error: None,
+                delta_e_ciede2000: None,
             }),
             "swift" => Some(PrettyVerification {
                 label: "Swift",
                 status: SupportStatus::Supported,
                 round_trip_error: None,
+                delta_e_ciede2000: None,
             }),
             "tailwind" => Some(PrettyVerification {
                 label: "Tailwind",
                 status: SupportStatus::Supported,
                 round_trip_error: None,
+                delta_e_ciede2000: None,
             }),
-            "cmyk" => Some(export_verification("CMYK", &exports.cmyk)),
+            "cmyk" => Some(export_verification("CMYK", &exports.cmyk, None)),
             _ => None,
         })
         .collect()
 }
 
-fn export_verification<T>(label: &'static str, export: &ColorExport<T>) -> PrettyVerification {
+fn export_verification<T>(
+    label: &'static str,
+    export: &ColorExport<T>,
+    delta_e_ciede2000: Option<f64>,
+) -> PrettyVerification {
     PrettyVerification {
         label,
         status: export.status,
         round_trip_error: export.round_trip_error,
+        delta_e_ciede2000,
+    }
+}
+
+fn delta_e_ciede2000(source: Oklch, round_trip: Oklch) -> Option<f64> {
+    let value = ciede2000_distance(
+        CielabD65::from_oklch(source),
+        CielabD65::from_oklch(round_trip),
+    );
+    value.is_finite().then_some(value)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CielabD65 {
+    l: f64,
+    a: f64,
+    b: f64,
+}
+
+impl CielabD65 {
+    fn from_oklch(color: Oklch) -> Self {
+        let xyz = color.to_xyz_d65();
+        let fx = cielab_f(xyz.x / D65_WHITE_X);
+        let fy = cielab_f(xyz.y / D65_WHITE_Y);
+        let fz = cielab_f(xyz.z / D65_WHITE_Z);
+
+        Self {
+            l: 116.0 * fy - 16.0,
+            a: 500.0 * (fx - fy),
+            b: 200.0 * (fy - fz),
+        }
+    }
+}
+
+fn cielab_f(value: f64) -> f64 {
+    if value > CIELAB_EPSILON {
+        value.cbrt()
+    } else {
+        (CIELAB_KAPPA * value + 16.0) / 116.0
+    }
+}
+
+fn ciede2000_distance(a: CielabD65, b: CielabD65) -> f64 {
+    let c1 = a.a.hypot(a.b);
+    let c2 = b.a.hypot(b.b);
+    let c_bar = (c1 + c2) / 2.0;
+    let c_bar7 = c_bar.powi(7);
+    let g = 0.5 * (1.0 - (c_bar7 / (c_bar7 + 25_f64.powi(7))).sqrt());
+
+    let a1_prime = (1.0 + g) * a.a;
+    let a2_prime = (1.0 + g) * b.a;
+    let c1_prime = a1_prime.hypot(a.b);
+    let c2_prime = a2_prime.hypot(b.b);
+    let h1_prime = hue_degrees(a.b, a1_prime);
+    let h2_prime = hue_degrees(b.b, a2_prime);
+
+    let delta_l_prime = b.l - a.l;
+    let delta_c_prime = c2_prime - c1_prime;
+    let delta_h_prime = if c1_prime * c2_prime == 0.0 {
+        0.0
+    } else {
+        let raw = h2_prime - h1_prime;
+        if raw.abs() <= 180.0 {
+            raw
+        } else if h2_prime <= h1_prime {
+            raw + 360.0
+        } else {
+            raw - 360.0
+        }
+    };
+    let delta_h_big_prime =
+        2.0 * (c1_prime * c2_prime).sqrt() * (delta_h_prime.to_radians() / 2.0).sin();
+
+    let l_bar_prime = (a.l + b.l) / 2.0;
+    let c_bar_prime = (c1_prime + c2_prime) / 2.0;
+    let h_bar_prime = if c1_prime * c2_prime == 0.0 {
+        h1_prime + h2_prime
+    } else {
+        let sum = h1_prime + h2_prime;
+        if (h1_prime - h2_prime).abs() <= 180.0 {
+            sum / 2.0
+        } else if sum < 360.0 {
+            (sum + 360.0) / 2.0
+        } else {
+            (sum - 360.0) / 2.0
+        }
+    };
+
+    let t = 1.0 - 0.17 * (h_bar_prime - 30.0).to_radians().cos()
+        + 0.24 * (2.0 * h_bar_prime).to_radians().cos()
+        + 0.32 * (3.0 * h_bar_prime + 6.0).to_radians().cos()
+        - 0.20 * (4.0 * h_bar_prime - 63.0).to_radians().cos();
+    let delta_theta = 30.0 * (-((h_bar_prime - 275.0) / 25.0).powi(2)).exp();
+    let c_bar_prime7 = c_bar_prime.powi(7);
+    let r_c = 2.0 * (c_bar_prime7 / (c_bar_prime7 + 25_f64.powi(7))).sqrt();
+    let s_l =
+        1.0 + (0.015 * (l_bar_prime - 50.0).powi(2)) / (20.0 + (l_bar_prime - 50.0).powi(2)).sqrt();
+    let s_c = 1.0 + 0.045 * c_bar_prime;
+    let s_h = 1.0 + 0.015 * c_bar_prime * t;
+    let r_t = -r_c * (2.0 * delta_theta).to_radians().sin();
+
+    let l_term = delta_l_prime / s_l;
+    let c_term = delta_c_prime / s_c;
+    let h_term = delta_h_big_prime / s_h;
+
+    (l_term.powi(2) + c_term.powi(2) + h_term.powi(2) + r_t * c_term * h_term).sqrt()
+}
+
+fn hue_degrees(b: f64, a: f64) -> f64 {
+    if a == 0.0 && b == 0.0 {
+        0.0
+    } else {
+        b.atan2(a).to_degrees().rem_euclid(360.0)
     }
 }
 
@@ -1928,6 +2126,22 @@ fn update_help_text() -> String {
     .join("\n")
 }
 
+fn linked_core_version() -> &'static str {
+    CLI_MANIFEST
+        .lines()
+        .find(|line| line.contains("open-chroma-index") && line.contains("version"))
+        .and_then(extract_toml_version)
+        .unwrap_or("unknown")
+}
+
+fn extract_toml_version(line: &'static str) -> Option<&'static str> {
+    let marker = "version = \"";
+    let start = line.find(marker)? + marker.len();
+    let rest = &line[start..];
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
 fn pipeline_error(error: oci_core::OciPipelineError) -> CliError {
     CliError::new("parse_error", error.to_string())
 }
@@ -2037,6 +2251,7 @@ mod tests {
         assert!(out.contains("supported:"));
         assert!(out.contains("profile required: CMYK"));
         assert!(out.contains("max round-trip error:"));
+        assert!(out.contains("ΔE CIEDE2000:"));
     }
 
     #[test]
@@ -2119,6 +2334,21 @@ mod tests {
             &config,
             "OCI Encode"
         ));
+    }
+
+    #[test]
+    fn ciede2000_matches_reference_pair() {
+        let a = CielabD65 {
+            l: 50.0,
+            a: 2.6772,
+            b: -79.7751,
+        };
+        let b = CielabD65 {
+            l: 50.0,
+            a: 0.0,
+            b: -82.7485,
+        };
+        assert!((ciede2000_distance(a, b) - 2.0425).abs() < 0.0001);
     }
 
     #[test]

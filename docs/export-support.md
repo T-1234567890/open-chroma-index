@@ -80,6 +80,9 @@ When supported, round-trip error is:
 error = OKLabDistance(sourceOKLab, targetRoundTripOKLab)
 ```
 
+Pretty CLI output also shows `ΔE CIEDE2000` on the next line. That value is
+computed separately in CIELAB D65 using the CIEDE2000 formula.
+
 where:
 
 ```text

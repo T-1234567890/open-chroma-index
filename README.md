@@ -100,6 +100,7 @@ verification:
   supported: HSL, sRGB, Display P3, Adobe RGB, Rec.709, OKLCH, OKLab, CSS, JSON token, Swift, Tailwind
   profile required: CMYK
   max round-trip error: 0.000000348709
+  ΔE CIEDE2000: 0.000035772907
 
 support: 12 targets evaluated
 warnings: none
