@@ -64,6 +64,7 @@ In an interactive terminal, the command prompts for:
 - Local Kernel API server host
 - Local Kernel API server port
 - whether to warn when the server is not bound to localhost
+- whether to check for CLI updates
 
 In non-interactive execution, the command writes defaults without prompting.
 
@@ -104,6 +105,11 @@ default_targets = ["hex", "oklch", "display-p3"]
 host = "127.0.0.1"
 port = 8765
 warn_non_localhost = true
+
+[update]
+check = true
+notices_shown = 0
+last_seen_version = ""
 ```
 
 ## Field Reference
@@ -169,6 +175,16 @@ oci serve --config /tmp/oci.toml --port 9000
 
 The Local Kernel API always returns JSON. CLI output defaults such as
 `output.format = "pretty"` do not change API response envelopes.
+
+### `[update]`
+
+- `check`: if true, normal human-readable commands check GitHub Releases for a
+  newer `cli-v*` release.
+- `notices_shown`: internal counter for how many times the current available
+  update has been shown. The CLI stops showing the same update after three
+  notices.
+- `last_seen_version`: internal latest release tag associated with the notice
+  counter.
 
 ## TOML Parser Notes
 

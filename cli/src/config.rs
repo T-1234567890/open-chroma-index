@@ -12,6 +12,7 @@ pub struct CliConfig {
     pub registry: RegistryConfig,
     pub color: ColorConfig,
     pub server: ServerConfig,
+    pub update: UpdateConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +58,13 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub warn_non_localhost: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateConfig {
+    pub check: bool,
+    pub notices_shown: usize,
+    pub last_seen_version: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +127,11 @@ impl Default for CliConfig {
                 host: "127.0.0.1".to_string(),
                 port: 8765,
                 warn_non_localhost: true,
+            },
+            update: UpdateConfig {
+                check: true,
+                notices_shown: 0,
+                last_seen_version: String::new(),
             },
         }
     }
@@ -183,7 +196,8 @@ impl CliConfig {
                 }
                 section = line[1..line.len() - 1].trim().to_string();
                 match section.as_str() {
-                    "output" | "encode" | "inspect" | "registry" | "color" | "server" => {}
+                    "output" | "encode" | "inspect" | "registry" | "color" | "server"
+                    | "update" => {}
                     _ => {
                         return Err(ConfigError::new(format!(
                             "line {line_number}: unknown section [{section}]"
@@ -233,7 +247,11 @@ impl CliConfig {
                 "[server]\n",
                 "host = \"{}\"\n",
                 "port = {}\n",
-                "warn_non_localhost = {}\n"
+                "warn_non_localhost = {}\n\n",
+                "[update]\n",
+                "check = {}\n",
+                "notices_shown = {}\n",
+                "last_seen_version = \"{}\"\n"
             ),
             escape_toml_string(&self.output.format),
             self.output.precision,
@@ -255,7 +273,10 @@ impl CliConfig {
             toml_array(&self.color.default_targets),
             escape_toml_string(&self.server.host),
             self.server.port,
-            self.server.warn_non_localhost
+            self.server.warn_non_localhost,
+            self.update.check,
+            self.update.notices_shown,
+            escape_toml_string(&self.update.last_seen_version)
         )
     }
 
@@ -333,6 +354,13 @@ impl CliConfig {
             }
             ("server", "warn_non_localhost") => {
                 self.server.warn_non_localhost = parse_bool(value, line_number)?
+            }
+            ("update", "check") => self.update.check = parse_bool(value, line_number)?,
+            ("update", "notices_shown") => {
+                self.update.notices_shown = parse_usize(value, line_number)?
+            }
+            ("update", "last_seen_version") => {
+                self.update.last_seen_version = parse_string(value, line_number)?
             }
             ("", _) => {
                 return Err(ConfigError::new(format!(

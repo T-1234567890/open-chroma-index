@@ -4,6 +4,8 @@
 //! deterministic color-space conversion math. Part 2 adds frozen v1-beta
 //! registry loading plus OCI ID parsing and formatting.
 
+pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod color;
 pub mod convert;
 pub mod error;

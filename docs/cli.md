@@ -6,7 +6,7 @@ The CLI uses a small internal parser. Arguments are positional plus long flags.
 Known flags that take values are:
 
 ```text
---space --format --precision --exports --to --from --type --path --config --host --port --id --family --range --out --template --filename
+--space --format --precision --exports --to --from --type --path --config --host --port --id --family --range --out --template --filename --version --dir
 ```
 
 Default output comes from configuration. Built-in defaults use `pretty`. JSON is
@@ -22,6 +22,7 @@ oci convert <INPUT> [--from <SPACE>] [--to <TARGETS>] [--format json|plain|prett
 oci serve [--host <HOST>] [--port <PORT>] [--config <TOML_PATH>] [--json]
 oci swatch gen (--id <OCI_ID>|--family <INDEX_OR_CODE>|--range <START>..<END>) --out <DIR> [--template <SVG_PATH>] [--filename short|full] [--overwrite]
 oci swatch data --id <OCI_ID>
+oci update [--version <TAG>] [--dir <PATH>] [--system] [--no-checksum] [--force]
 oci registry <SUBCOMMAND> [--path <TOML_PATH>]
 oci test <SUBCOMMAND> [--path <TOML_PATH>]
 oci validate <TARGET> [--type id|registry|color] [--space <SPACE>] [--path <TOML_PATH>]
@@ -335,6 +336,31 @@ through tests or non-interactive process execution, it writes current or
 built-in defaults without prompting.
 
 See [Configuration](configuration.md).
+
+## `oci update`
+
+Purpose: update the installed `oci` CLI from GitHub Releases.
+
+```text
+oci update [--version <TAG>] [--dir <PATH>] [--system] [--no-checksum] [--force]
+```
+
+Examples:
+
+```text
+oci update
+oci update --version cli-v0.3.2
+oci update --dir ~/.local/bin
+oci update --system
+```
+
+By default, `oci update` installs the latest `cli-v*` release. It delegates to
+the project install script, so the same installer rules apply for platform
+detection, checksum verification, custom directories, and system installation.
+
+During normal human-readable commands, the CLI checks GitHub Releases for a
+newer `cli-v*` release. The notice is shown at most three times for the same
+available release. JSON output is not modified by update notices.
 
 ## Error Codes
 

@@ -9,6 +9,12 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
+use std::process::Command;
+
+const UPDATE_RELEASES_URL: &str =
+    "https://api.github.com/repos/T-1234567890/open-chroma-index/releases?per_page=20";
+const INSTALL_SCRIPT_URL: &str =
+    "https://raw.githubusercontent.com/T-1234567890/open-chroma-index/main/install.sh";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliError {
@@ -35,6 +41,9 @@ pub fn run_cli(args: &[String]) -> Result<String, CliError> {
     }
 
     if matches!(command, "--version" | "-V" | "version") {
+        if args.iter().any(|arg| arg == "--core") {
+            return Ok(format!("oci-core {}", oci_core::CORE_VERSION));
+        }
         return Ok(format!("oci {}", env!("CARGO_PKG_VERSION")));
     }
 
@@ -42,9 +51,14 @@ pub fn run_cli(args: &[String]) -> Result<String, CliError> {
         return cmd_config(args, ConfigMode::NonInteractive);
     }
 
-    let config = CliConfig::load_from_args(args).map_err(config_error)?;
+    if command == "update" {
+        return cmd_update(&args[1..]);
+    }
 
-    run_cli_with_config(args, &config)
+    let config_path = config_path_from_args(args);
+    let mut config = CliConfig::load_from_args(args).map_err(config_error)?;
+    let out = run_cli_with_config(args, &config)?;
+    maybe_add_update_notice(args, &mut config, &config_path, out)
 }
 
 pub(crate) fn run_cli_with_config(args: &[String], config: &CliConfig) -> Result<String, CliError> {
@@ -85,6 +99,7 @@ fn help_text() -> String {
         "  oci serve [--host <HOST>] [--port <PORT>] [--config <PATH>] [--json]",
         "  oci swatch gen (--id <OCI_ID>|--family <INDEX_OR_CODE>|--range <START>..<END>) --out <DIR> [--template <SVG_PATH>] [--filename short|full] [--overwrite]",
         "  oci swatch data --id <OCI_ID>",
+        "  oci update [--version <TAG>] [--dir <PATH>] [--system] [--no-checksum] [--force]",
         "  oci registry <SUBCOMMAND>",
         "  oci test <SUBCOMMAND>",
         "  oci validate <TARGET> [--type id|registry|color]",
@@ -93,8 +108,10 @@ fn help_text() -> String {
         "Common commands:",
         "  oci encode \"#E85A9A\" --space hex",
         "  oci inspect OCI-1-48RS-327",
+        "  oci --version --core",
         "  oci serve",
         "  oci swatch gen --id OCI-1-22TL-326 --out out/",
+        "  oci update",
         "  oci registry validate",
     ]
     .join("\n")
@@ -224,6 +241,171 @@ fn cmd_serve(args: &[String], config: &CliConfig) -> Result<String, CliError> {
     let options = crate::server::ServerOptions::from_args(args, config)?;
     crate::server::serve(options, config.clone())?;
     Ok(String::new())
+}
+
+fn cmd_update(args: &[String]) -> Result<String, CliError> {
+    if has_flag(args, "--help") || has_flag(args, "-h") {
+        return Ok(update_help_text());
+    }
+
+    let script_path = std::env::temp_dir().join(format!("oci-install-{}.sh", std::process::id()));
+    let download = Command::new("curl")
+        .args(["-fsSL", INSTALL_SCRIPT_URL, "-o"])
+        .arg(&script_path)
+        .status()
+        .map_err(|error| CliError::new("update_error", format!("failed to run curl: {error}")))?;
+    if !download.success() {
+        return Err(CliError::new(
+            "update_error",
+            format!("failed to download installer from {INSTALL_SCRIPT_URL}"),
+        ));
+    }
+
+    let mut install_args = Vec::new();
+    for flag in ["--version", "--dir"] {
+        if let Some(value) = flag_value(args, flag) {
+            install_args.push(flag.to_string());
+            install_args.push(value.to_string());
+        }
+    }
+    for flag in ["--system", "--no-checksum", "--force"] {
+        if has_flag(args, flag) {
+            install_args.push(flag.to_string());
+        }
+    }
+
+    let status = Command::new("bash")
+        .arg(&script_path)
+        .args(&install_args)
+        .status()
+        .map_err(|error| {
+            CliError::new("update_error", format!("failed to run installer: {error}"))
+        })?;
+    let _ = fs::remove_file(&script_path);
+    if !status.success() {
+        return Err(CliError::new(
+            "update_error",
+            format!("installer exited with status {status}"),
+        ));
+    }
+
+    Ok("OCI CLI update completed.".to_string())
+}
+
+fn maybe_add_update_notice(
+    args: &[String],
+    config: &mut CliConfig,
+    config_path: &std::path::Path,
+    output: String,
+) -> Result<String, CliError> {
+    if !should_check_for_update(args, config, &output) {
+        return Ok(output);
+    }
+
+    let Some(latest) = latest_cli_release_tag() else {
+        return Ok(output);
+    };
+    let current = env!("CARGO_PKG_VERSION");
+    if !is_newer_cli_tag(&latest, current) {
+        return Ok(output);
+    }
+
+    if config.update.last_seen_version != latest {
+        config.update.last_seen_version = latest.clone();
+        config.update.notices_shown = 0;
+    }
+    if config.update.notices_shown >= 3 {
+        return Ok(output);
+    }
+
+    config.update.notices_shown += 1;
+    let _ = config.write_to_path(config_path);
+    let notice = format!(
+        "Update available: oci {current} -> {}. Run `oci update` to install it. ({}/3)",
+        latest.trim_start_matches("cli-v"),
+        config.update.notices_shown
+    );
+    Ok(format!("{notice}\n\n{output}"))
+}
+
+fn should_check_for_update(args: &[String], config: &CliConfig, output: &str) -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    should_check_for_update_inner(args, config, output)
+}
+
+fn should_check_for_update_inner(args: &[String], config: &CliConfig, output: &str) -> bool {
+    if !config.update.check || config.update.notices_shown >= 3 {
+        return false;
+    }
+    let Some(command) = args.first().map(String::as_str) else {
+        return false;
+    };
+    if matches!(
+        command,
+        "--help" | "-h" | "help" | "--version" | "-V" | "version" | "config" | "update" | "serve"
+    ) {
+        return false;
+    }
+    if output.trim_start().starts_with('{') {
+        return false;
+    }
+    !matches!(flag_value(args, "--format"), Some("json"))
+}
+
+fn latest_cli_release_tag() -> Option<String> {
+    let output = Command::new("curl")
+        .args(["-fsSL", "--max-time", "2", UPDATE_RELEASES_URL])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let body = String::from_utf8(output.stdout).ok()?;
+    latest_cli_tag_from_releases_json(&body)
+}
+
+fn latest_cli_tag_from_releases_json(body: &str) -> Option<String> {
+    let marker = "\"tag_name\"";
+    let mut rest = body;
+    while let Some(start) = rest.find(marker) {
+        let value_start = start + marker.len();
+        let value_rest = &rest[value_start..];
+        let colon = value_rest.find(':')?;
+        let after_colon = value_rest[colon + 1..].trim_start();
+        let tag_rest = after_colon.strip_prefix('"')?;
+        let end = tag_rest.find('"')?;
+        let tag = &tag_rest[..end];
+        if tag.starts_with("cli-v") {
+            return Some(tag.to_string());
+        }
+        rest = &tag_rest[end..];
+    }
+    None
+}
+
+fn is_newer_cli_tag(tag: &str, current: &str) -> bool {
+    let Some(version) = tag.strip_prefix("cli-v") else {
+        return false;
+    };
+    compare_versions(version, current).is_gt()
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let mut left_parts = left.split('.').map(|part| part.parse::<u64>().unwrap_or(0));
+    let mut right_parts = right
+        .split('.')
+        .map(|part| part.parse::<u64>().unwrap_or(0));
+    for _ in 0..3 {
+        let left = left_parts.next().unwrap_or(0);
+        let right = right_parts.next().unwrap_or(0);
+        match left.cmp(&right) {
+            std::cmp::Ordering::Equal => {}
+            ordering => return ordering,
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 fn cmd_swatch(args: &[String], config: &CliConfig) -> Result<String, CliError> {
@@ -809,6 +991,7 @@ fn run_config_wizard(mut config: CliConfig, path: &std::path::Path) -> Result<Cl
         "warn when server is not localhost",
         config.server.warn_non_localhost,
     )?;
+    config.update.check = prompt_bool("check for CLI updates", config.update.check)?;
 
     Ok(config)
 }
@@ -1689,6 +1872,8 @@ fn flag_takes_value(flag: &str) -> bool {
             | "--out"
             | "--template"
             | "--filename"
+            | "--version"
+            | "--dir"
     )
 }
 
@@ -1723,6 +1908,22 @@ fn serve_help_text() -> String {
         "  GET  /v1/registry/families",
         "  GET  /v1/registry/family/{indexOrCode}",
         "  GET  /v1/registry/step/{idOrStep}",
+    ]
+    .join("\n")
+}
+
+fn update_help_text() -> String {
+    [
+        "OCI CLI Update",
+        "",
+        "Usage:",
+        "  oci update [--version <TAG>] [--dir <PATH>] [--system] [--no-checksum] [--force]",
+        "",
+        "Examples:",
+        "  oci update",
+        "  oci update --version cli-v0.3.0",
+        "  oci update --dir ~/.local/bin",
+        "  oci update --system",
     ]
     .join("\n")
 }
@@ -1866,6 +2067,9 @@ mod tests {
 
         let version = run_cli(&args(&["--version"])).unwrap();
         assert!(version.starts_with("oci "));
+
+        let core_version = run_cli(&args(&["--version", "--core"])).unwrap();
+        assert!(core_version.starts_with("oci-core "));
     }
 
     #[test]
@@ -1873,6 +2077,48 @@ mod tests {
         let help = run_cli(&args(&["serve", "--help"])).unwrap();
         assert!(help.contains("OCI Local Kernel API Server"));
         assert!(help.contains("GET  /v1/health"));
+    }
+
+    #[test]
+    fn update_help_exists() {
+        let help = run_cli(&args(&["update", "--help"])).unwrap();
+        assert!(help.contains("OCI CLI Update"));
+        assert!(help.contains("oci update"));
+        assert!(help.contains("--version <TAG>"));
+    }
+
+    #[test]
+    fn update_release_helpers_find_and_compare_cli_tags() {
+        let body = r#"[{"tag_name": "core-v0.4.0"},{"tag_name": "cli-v0.3.2"}]"#;
+        assert_eq!(
+            latest_cli_tag_from_releases_json(body).as_deref(),
+            Some("cli-v0.3.2")
+        );
+        assert!(is_newer_cli_tag("cli-v0.3.2", "0.3.1"));
+        assert!(!is_newer_cli_tag("cli-v0.3.0", "0.3.1"));
+    }
+
+    #[test]
+    fn update_notice_decision_skips_json_and_stops_after_three_notices() {
+        let mut config = CliConfig::default();
+        assert!(should_check_for_update_inner(
+            &args(&["encode", "#E85A9A", "--space", "hex"]),
+            &config,
+            "OCI Encode"
+        ));
+
+        assert!(!should_check_for_update_inner(
+            &args(&["encode", "#E85A9A", "--space", "hex", "--format", "json"]),
+            &config,
+            "{\"ok\":true}"
+        ));
+
+        config.update.notices_shown = 3;
+        assert!(!should_check_for_update_inner(
+            &args(&["encode", "#E85A9A", "--space", "hex"]),
+            &config,
+            "OCI Encode"
+        ));
     }
 
     #[test]
@@ -2003,6 +2249,8 @@ mod tests {
         assert_eq!(config.registry.source, "bundled");
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 8765);
+        assert!(config.update.check);
+        assert_eq!(config.update.notices_shown, 0);
     }
 
     #[test]
@@ -2094,6 +2342,7 @@ mod tests {
         let written = fs::read_to_string(&path).unwrap();
         assert!(written.contains("[output]"));
         assert!(written.contains("format = \"pretty\""));
+        assert!(written.contains("[update]"));
 
         let _ = fs::remove_file(path);
     }

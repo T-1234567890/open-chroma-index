@@ -202,6 +202,7 @@ oci inspect OCI-1-48RS-327
 oci export OCI-1-48RS-327 --to hex,oklch,css
 oci swatch gen --id OCI-1-22TL-326 --template Color_Cards_OCI_v1.svg --out out/
 oci serve
+oci update
 oci config
 ```
 

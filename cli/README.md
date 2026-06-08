@@ -74,6 +74,7 @@ oci export OCI-1-48RS-327 --to hex,oklch,css
 oci registry info
 oci swatch gen --id OCI-1-22TL-326 --template Color_Cards_OCI_v1.svg --out out/
 oci serve
+oci update
 oci config
 ```
 
@@ -87,6 +88,7 @@ oci convert <INPUT> --from <SPACE> --to <TARGETS> [--format json|plain|pretty] [
 oci serve [--host <HOST>] [--port <PORT>] [--config <PATH>] [--json]
 oci swatch gen (--id <OCI_ID>|--family <INDEX_OR_CODE>|--range <START>..<END>) --out <DIR> [--template <SVG_PATH>] [--filename short|full] [--overwrite]
 oci swatch data --id <OCI_ID>
+oci update [--version <TAG>] [--dir <PATH>] [--system] [--no-checksum] [--force]
 oci registry <SUBCOMMAND>
 oci test <SUBCOMMAND>
 oci validate <TARGET> [--type id|registry|color]
@@ -131,6 +133,23 @@ GET  /v1/registry/step/{idOrStep}
 The server is local by default and returns JSON envelopes for every endpoint.
 For request and response examples, see the main project documentation:
 [`../docs/local-api.md`](../docs/local-api.md).
+
+## Updates
+
+`oci update` runs the project install script and installs the latest `cli-v*`
+release by default.
+
+```text
+oci update
+oci update --version cli-v0.3.2
+oci update --dir ~/.local/bin
+oci update --system
+```
+
+During normal human-readable commands, the CLI checks GitHub Releases for a
+newer `cli-v*` release. It shows the update notice up to three times for the
+same available release, then stops showing it. JSON output is not changed by
+update notices.
 
 ## Config
 
